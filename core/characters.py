@@ -1,8 +1,8 @@
 CULTURE_PROMPTS = {
-    "ru": "Language: Russian. Cultural vibe: soulful, subtle self-irony, references to Chekhov, Dovlatov, Brodsky, cozy tea/dacha/evening atmosphere.",
-    "uk": "Language: Ukrainian. Cultural vibe: warm folk humor, lyrical wit, references to Hryhorii Skovoroda or Lina Kostenko, subtle embroidered/cozy home details.",
-    "en": "Language: English. Cultural vibe: clever British/American stand-up wit, quotes from Oscar Wilde or Mark Twain, vintage coffee shop aesthetic.",
-    "es": "Language: Spanish. Cultural vibe: sunny expressiveness, playful theatricality, references to Gabriel García Márquez, Borges, or Neruda, warm sunset terrace or fiesta vibe."
+    "ru": "Language: natural, sharp, modern Russian. No folk clichés or repetitive authors. Draw freely from global wit, world philosophy, dark humor, stand-up comedy, and razor-sharp aphorisms (from Seneca, Schopenhauer, Oscar Wilde, Churchill, and Ranevskaya to modern psychology).",
+    "uk": "Language: natural, witty, modern Ukrainian. Avoid folkloric clichés or repetitive local names. Draw freely from global wit, world philosophy, dark humor, stand-up comedy, and razor-sharp aphorisms from all eras and cultures.",
+    "en": "Language: sharp, witty, cosmopolitan English. Draw freely from global philosophy, British/American stand-up, Oscar Wilde, Mark Twain, George Carlin, and cynical world wisdom.",
+    "es": "Language: vibrant, witty, modern Spanish. Draw freely from global irony, philosophical paradoxes, sharp stand-up humor, and universal human wisdom across all eras."
 }
 
 CHARACTER_PROMPTS = {
@@ -29,9 +29,9 @@ CHARACTER_PROMPTS = {
 }
 
 MOOD_PROMPTS = {
-    "warm": "Mood: Warmth, gentle flirtation, uplifting compliment mixed with an unexpected witty joke.",
-    "wisdom": "Mood: Contrasting wisdom. Combine a famous philosopher/writer quote twisted humorously with a cozy, ironic visual scene.",
-    "greed": "Mood: Playful satire on GREED. Clutching a giant piggy bank, overflowing menu, or pile of sweets/coins with sparkling eyes and comedic possessiveness.",
-    "flattery": "Mood: Playful satire on SWEET FLATTERY. Over-the-top sweet smile, rolling out a red carpet or holding a golden crown for the viewer while crossing fingers behind back.",
-    "lust": "Mood: Playful PG-13 satire on PASSION & FLIRTATION. Dramatic Italian comedy vibe, tousled hair, burning passionate gaze, loosening collar, comedic heart sparks."
+    "warm": "Mood: Intellectual flirtation and charming sarcasm. Give a clever, slightly teasing compliment mixed with witty global irony—never cheesy or overly sweet.",
+    "wisdom": "Mood: Razor-sharp world sarcasm and paradoxical philosophy. Twist famous global wisdom (stoics, cynics, writers, comedians) into an unexpectedly funny, slightly ruthless observation about life or love.",
+    "greed": "Mood: Merciless satire on GREED and materialism. Clutching a giant piggy bank, overflowing menu, or pile of gold/sweets with sparkling eyes and comedic possessiveness.",
+    "flattery": "Mood: Venomous satire on SWEET FLATTERY and hypocrisy. Over-the-top sugar-sweet smile, rolling out a red carpet or holding a golden crown while crossing fingers behind back.",
+    "lust": "Mood: Playful PG-13 satire on PASSION, DESIRE & FLIRTATION. Dramatic comedy vibe, tousled hair, burning gaze, loosening collar, mocking human instincts with witty charm."
 }
