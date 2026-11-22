@@ -5,7 +5,14 @@ pool: AsyncConnectionPool | None = None
 
 async def init_db():
     global pool
-    pool = AsyncConnectionPool(conninfo=DATABASE_URL, open=False)
+    pool = AsyncConnectionPool(
+        conninfo=DATABASE_URL,
+        min_size=1,
+        max_size=5,
+        max_idle=60,
+        check=AsyncConnectionPool.check_connection,
+        open=False
+    )
     await pool.open()
     async with pool.connection() as conn:
         await conn.execute("""
