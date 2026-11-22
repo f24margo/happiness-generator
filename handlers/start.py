@@ -27,7 +27,7 @@ def get_chars_keyboard(lang: str) -> InlineKeyboardMarkup:
 def get_langs_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang:ru"),
-         InlineKeyboardButton(text="��🇦 Українська", callback_data="setlang:uk")],
+         InlineKeyboardButton(text="��🇺🇦 Українська", callback_data="setlang:uk")],
         [InlineKeyboardButton(text="🇬🇧 English", callback_data="setlang:en"),
          InlineKeyboardButton(text="🇪🇸 Español", callback_data="setlang:es")]
     ])

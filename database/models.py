@@ -26,7 +26,11 @@ async def get_or_create_user(user_id: int, username: str | None, lang: str = "ru
                 user = await cur.fetchone()
             return user
 
+ALLOWED_USER_FIELDS = {"character_code", "language", "is_vip"}
+
 async def update_user_field(user_id: int, field: str, value):
+    if field not in ALLOWED_USER_FIELDS:
+        raise ValueError(f"Invalid field: {field}")
     async with db.pool.connection() as conn:
         await conn.execute(f"UPDATE users SET {field} = %s WHERE user_id = %s", (value, user_id))
 

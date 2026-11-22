@@ -9,11 +9,14 @@ async def init_db():
         conninfo=DATABASE_URL,
         min_size=1,
         max_size=5,
+        timeout=10.0,
         max_idle=60,
+        max_lifetime=300,
+        kwargs={"connect_timeout": 10},
         check=AsyncConnectionPool.check_connection,
         open=False
     )
-    await pool.open()
+    await pool.open(wait=True, timeout=15.0)
     async with pool.connection() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
