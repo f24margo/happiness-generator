@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from config import BOT_TOKEN
 from database.db import init_db, close_db
-from handlers import start, generate
+from handlers import start, generate, caricature_prompt
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +36,7 @@ async def main():
     dp = Dispatcher()
     dp.include_router(start.router)
     dp.include_router(generate.router)
+    dp.include_router(caricature_prompt.router)
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
