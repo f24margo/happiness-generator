@@ -1,0 +1,102 @@
+LOCALES = {
+    "ru": {
+        "welcome": "✨ Добро пожаловать в **Генератор счастья**!\n\nВыбери спутника и настроение. Я создам для тебя живой шарж пером и гуашью с порцией юмора, флирта или мудрости великих.\n\n📸 *Лайфхак: просто пришли мне любое фото, и я нарисую добрый или сатирический шарж по нему!*",
+        "choose_char": "👤 Выбери персонажа:",
+        "choose_lang": "🌐 Выбери язык / Choose language:",
+        "menu_title": "🎭 Спутник: **{char}** | Бесплатно сегодня: **{rem}**\nВыбери эмоцию или пришли фото для шаржа:",
+        "btn_warm": "☀️ Тепло и флирт",
+        "btn_wisdom": "🧠 Мудрость с контрастом",
+        "btn_greed": "💰 Сатира: Жадность",
+        "btn_flattery": "👑 Сатира: Сладкая лесть",
+        "btn_lust": "🔥 Сатира: Страсть и флирт",
+        "btn_char": "👤 Сменить героя",
+        "btn_lang": "🌐 Язык",
+        "btn_vip": "💎 VIP-режим (Скоро)",
+        "generating": "🎨 Беру перо и гуашь... Рисую шарж и подбираю слова (5–10 сек)...",
+        "limit_reached": "⏳ Дневной лимит бесплатных генераций исчерпан! Возвращайся завтра или подключи VIP-подписку.",
+        "vip_info": "💎 **VIP-подписка (Скоро через Telegram Stars)**\n\n• Безлимит шаржей каждый день\n• Безлимитные шаржи по твоим фото и фото друзей\n• Закрытые персонажи и стили великих художников",
+        "photo_received": "📸 Отличное фото! Превращаю в журнальный шарж пером и гуашью...",
+        "chars": {
+            "girl": "👩 Девушка",
+            "boy": "👨 Парень",
+            "grandma": "👵 Бабушка",
+            "grandpa": "👴 Дедушка",
+            "cat": "🎨 Космический кот"
+        }
+    },
+    "uk": {
+        "welcome": "✨ Ласкаво просимо до **Генератора щастя**!\n\nОбери супутника та настрій. Я створю для тебе живий шарж пером і гуашшю з порцією гумору, флірту або мудрості великих.\n\n📸 *Лайфхак: просто надішли мені будь-яке фото, і я намалюю добрий або сатиричний шарж за ним!*",
+        "choose_char": "👤 Обери персонажа:",
+        "choose_lang": "🌐 Обери мову / Choose language:",
+        "menu_title": "🎭 Супутник: **{char}** | Безкоштовно сьогодні: **{rem}**\nОбери емоцію або надішли фото для шаржу:",
+        "btn_warm": "☀️ Тепло і флірт",
+        "btn_wisdom": "🧠 Мудрість із контрастом",
+        "btn_greed": "💰 Сатира: Жадібність",
+        "btn_flattery": "👑 Сатира: Солодкі лестощі",
+        "btn_lust": "🔥 Сатира: Пристрасть і флірт",
+        "btn_char": "👤 Змінити героя",
+        "btn_lang": "🌐 Мова",
+        "btn_vip": "💎 VIP-режим (Незабаром)",
+        "generating": "🎨 Беру перо і гуаш... Малюю шарж та добираю слова (5–10 сек)...",
+        "limit_reached": "⏳ Денний ліміт безкоштовних генерацій вичерпано! Повертайся завтра або підключи VIP.",
+        "vip_info": "💎 **VIP-підписка (Незабаром через Telegram Stars)**\n\n• Безліміт шаржів щодня\n• Безлімітні шаржі за твоїми фото та фото друзів\n• Закриті персонажі та стилі великих художників",
+        "photo_received": "📸 Чудове фото! Перетворюю на журнальний шарж пером і гуашшю...",
+        "chars": {
+            "girl": "👩 Дівчина",
+            "boy": "👨 Хлопець",
+            "grandma": "👵 Бабуся",
+            "grandpa": "👴 Дідусь",
+            "cat": "🎨 Космічний кіт"
+        }
+    },
+    "en": {
+        "welcome": "✨ Welcome to the **Happiness Generator**!\n\nPick a companion and a mood. I'll craft an ink-and-gouache caricature with a dash of wit, light flirtation, or timeless wisdom.\n\n📸 *Pro tip: send me any photo, and I'll turn it into a warm or satirical caricature!*",
+        "choose_char": "👤 Choose your character:",
+        "choose_lang": "🌐 Choose language:",
+        "menu_title": "🎭 Companion: **{char}** | Free left today: **{rem}**\nPick a mood or send a photo:",
+        "btn_warm": "☀️ Warmth & Flirt",
+        "btn_wisdom": "🧠 Contrasting Wisdom",
+        "btn_greed": "💰 Satire: Greed",
+        "btn_flattery": "👑 Satire: Sweet Flattery",
+        "btn_lust": "🔥 Satire: Passion & Flirt",
+        "btn_char": "👤 Change Hero",
+        "btn_lang": "🌐 Language",
+        "btn_vip": "💎 VIP Mode (Soon)",
+        "generating": "🎨 Grabbing ink pen and gouache... Sketching your caricature (5–10 sec)...",
+        "limit_reached": "⏳ Daily free limit reached! Come back tomorrow or unlock VIP access.",
+        "vip_info": "💎 **VIP Subscription (Coming soon via Telegram Stars)**\n\n• Unlimited daily caricatures\n• Unlimited photo-to-caricature transformations\n• Exclusive characters & master artist styles",
+        "photo_received": "📸 Great photo! Turning it into an editorial ink & gouache caricature...",
+        "chars": {
+            "girl": "👩 Charming Girl",
+            "boy": "👨 Charismatic Guy",
+            "grandma": "👵 Witty Grandma",
+            "grandpa": "👴 Wise Grandpa",
+            "cat": "🎨 Cosmic Cat"
+        }
+    },
+    "es": {
+        "welcome": "✨ ¡Bienvenido al **Generador de Felicidad**!\n\nElige un compañero y un estado de ánimo. Crearé una caricatura a pluma y gouache con humor, coqueteo ligero o sabiduría.\n\n📸 *Consejo: ¡envíame cualquier foto y haré una caricatura divertida o satírica!*",
+        "choose_char": "👤 Elige tu personaje:",
+        "choose_lang": "🌐 Elige idioma:",
+        "menu_title": "🎭 Compañero: **{char}** | Gratis hoy: **{rem}**\nElige emoción o envía una foto:",
+        "btn_warm": "☀️ Calidez y Coqueteo",
+        "btn_wisdom": "🧠 Sabiduría con Contraste",
+        "btn_greed": "💰 Sátira: Codicia",
+        "btn_flattery": "👑 Sátira: Dulce Adulación",
+        "btn_lust": "🔥 Sátira: Pasión y Coqueteo",
+        "btn_char": "👤 Cambiar Héroe",
+        "btn_lang": "🌐 Idioma",
+        "btn_vip": "💎 Modo VIP (Pronto)",
+        "generating": "🎨 Tomando pluma y gouache... Dibujando tu caricatura (5–10 seg)...",
+        "limit_reached": "⏳ ¡Límite diario gratuito alcanzado! Vuelve mañana o activa el modo VIP.",
+        "vip_info": "💎 **Suscripción VIP (Próximamente con Telegram Stars)**\n\n• Caricaturas ilimitadas cada día\n• Caricaturas ilimitadas desde tus fotos\n• Personajes exclusivos y estilos de grandes artistas",
+        "photo_received": "📸 ¡Gran foto! Transformándola en una caricatura a pluma y gouache...",
+        "chars": {
+            "girl": "👩 Chica Encantadora",
+            "boy": "👨 Chico Carismático",
+            "grandma": "👵 Abuela Sabia",
+            "grandpa": "👴 Abuelo Ingenioso",
+            "cat": "🎨 Gato Cósmico"
+        }
+    }
+}
