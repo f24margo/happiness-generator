@@ -14,9 +14,10 @@ from core.characters import CULTURE_PROMPTS, CHARACTER_PROMPTS, MOOD_PROMPTS
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 BASE_STYLE_PROMPT = (
-    "humorous editorial cartoon caricature illustration, lively black ink pen sketch with colorful gouache and watercolor wash, "
-    "classic European comic caricature style like Herluf Bidstrup, "
-    "witty expressive facial mimicry, clean hand-drawn ink lines on warm textured paper, charming and funny, no signature, no text"
+    "flattering stylish editorial gouache and watercolor cartoon illustration, "
+    "smooth youthful glowing skin, NO harsh ink lines on the face, NO wrinkles, NO aging lines, "
+    "bright sparkling eyes, charming modern magazine illustration style, "
+    "expressive playful pose and witty props, clean colorful brushstrokes on warm paper, no signature, no text"
 )
 
 def _build_cf_url(model_path: str) -> str:
@@ -98,10 +99,10 @@ async def generate_happiness_card(
     mood_desc = MOOD_PROMPTS.get(mood_code, MOOD_PROMPTS["warm"])
 
     photo_rule = (
-        "Study the attached photo very carefully! Extract exact, unmistakable facial features of the person "
-        "(exact age, face shape, hairstyle/hairline, beard/mustache shape, eyebrows, eye shape, nose, glasses, clothing) "
-        "and put this detailed portrait description at the start of 'image_scene' so the caricature looks just like them."
-        if user_photo_bytes else f"STRICT CHARACTER APPEARANCE (Keep every detail): {char_desc}"
+        "Study the attached photo carefully and create a FLATTERING, YOUTHFUL description of the person "
+        "(make them look 5-10 years younger, fresh, radiant, smooth skin without wrinkles, keeping their exact hairstyle, "
+        "hair color, eye color, glasses, smile, and clothing style) so the illustration looks like a charming, flattering magazine portrait."
+        if user_photo_bytes else f"STRICT CHARACTER APPEARANCE (Keep every detail, youthful and flattering): {char_desc}"
     )
 
     system_instruction = f"""
