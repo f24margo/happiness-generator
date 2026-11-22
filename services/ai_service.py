@@ -1,14 +1,14 @@
+import asyncio
+import base64
 import io
 import json
-import base64
-import asyncio
 import logging
 import aiohttp
-from PIL import Image
 from google import genai
 from google.genai import types
-from config import GEMINI_API_KEY, CF_ACCOUNT_ID, CF_API_TOKEN
-from core.characters import CULTURE_PROMPTS, CHARACTER_PROMPTS, MOOD_PROMPTS
+from PIL import Image
+from config import CF_ACCOUNT_ID, CF_API_TOKEN, GEMINI_API_KEY
+from core.characters import CHARACTER_PROMPTS, CULTURE_PROMPTS, MOOD_PROMPTS
 
 logger = logging.getLogger(__name__)
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -20,14 +20,29 @@ BASE_STYLE_PROMPT = (
     "expressive playful pose and witty props, clean colorful brushstrokes on warm paper, no signature, no text"
 )
 
+CARICATURE_PROMPT_SYSTEM_INSTRUCTION = """You are a prompt engineer for image generation and editing in Gemini.
+The user will attach their own photo directly inside Gemini and paste your English prompt.
+Transform three user inputs into one clear, effective English prompt that preserves facial likeness and identity from the attached photo while applying a caricature style.
+
+Rules:
+1. Explicitly instruct Gemini to use the attached photo as the primary identity and facial likeness reference, preserving key facial features, hair, glasses/beard if present, and likeness details specified by the user.
+2. Apply the requested caricature exaggeration, expression/emotion, art style, scene, lighting, and mood naturally without replacing the person with an unrelated stranger.
+3. Keep prompt_en concise, concrete, and ready to copy-paste (1-2 clear sentences/clauses, no markdown code fences).
+4. Write summary_ru in Russian (1-2 short sentences) summarizing what likeness anchors, caricature style/emotion, and scene/mood were combined.
+5. Return strictly valid JSON with keys "prompt_en" and "summary_ru".
+"""
+
+
 def _build_cf_url(model_path: str) -> str:
     acc = CF_ACCOUNT_ID.strip()
     return f"https://api.cloudflare.com/client/v4/accounts/{acc}/ai/run/{model_path}"
+
 
 def _prepare_input_image(raw_bytes: bytes) -> Image.Image:
     img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
     img.thumbnail((1024, 1024))
     return img
+
 
 def _compress_output_jpeg(raw_bytes: bytes) -> bytes:
     img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
@@ -35,15 +50,16 @@ def _compress_output_jpeg(raw_bytes: bytes) -> bytes:
     img.save(out, format="JPEG", quality=88, optimize=True)
     return out.getvalue()
 
+
 async def _generate_cf_text2img(prompt: str) -> bytes | None:
     if not CF_ACCOUNT_ID or not CF_API_TOKEN:
         return None
     url = _build_cf_url("@cf/black-forest-labs/flux-1-schnell")
     headers = {
         "Authorization": f"Bearer {CF_API_TOKEN.strip()}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
-    payload = {"prompt": prompt, "steps": 6}
+    payload = {"prompt": prompt, "steps": 4}
     timeout = aiohttp.ClientTimeout(total=25, connect=5)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -62,11 +78,61 @@ async def _generate_cf_text2img(prompt: str) -> bytes | None:
             raw_png = base64.b64decode(b64_image)
             return await asyncio.to_thread(_compress_output_jpeg, raw_png)
 
+
+async def build_caricature_prompt(
+    likeness_details: str,
+    style_emotion: str,
+    scene_mood: str,
+    lang: str = "ru",
+) -> tuple[str, str]:
+    user_payload = (
+        f"User language: {lang}\n"
+        f"Likeness & details to preserve/add: {likeness_details.strip()}\n"
+        f"Caricature style & emotion: {style_emotion.strip()}\n"
+        f"Scene & mood: {scene_mood.strip()}"
+    )
+
+    for model_name in ["gemini-3.5-flash-lite", "gemini-3.8-flash"]:
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=model_name,
+                    contents=user_payload,
+                    config=types.GenerateContentConfig(
+                        system_instruction=CARICATURE_PROMPT_SYSTEM_INSTRUCTION,
+                        response_mime_type="application/json",
+                        temperature=0.6,
+                    ),
+                ),
+                timeout=12.0,
+            )
+            raw_text = (response.text or "").strip()
+            clean_json = raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            data = json.loads(clean_json)
+            prompt_en = str(data.get("prompt_en", "")).strip()
+            summary_ru = str(data.get("summary_ru", "")).strip()
+            if prompt_en and summary_ru:
+                return prompt_en, summary_ru
+        except Exception as e:
+            logger.warning("build_caricature_prompt через %s не удался: %s", model_name, e)
+
+    fallback_prompt = (
+        f"Using the attached photo as the primary identity reference, create a caricature "
+        f"({style_emotion.strip()}) while preserving facial likeness and details ({likeness_details.strip()}). "
+        f"Set the scene in {scene_mood.strip()}, expressive proportions, clean composition, no text or watermarks."
+    )
+    fallback_summary = (
+        f"Опора на фото ({likeness_details.strip()}), шарж и эмоция ({style_emotion.strip()}), "
+        f"сцена и настроение ({scene_mood.strip()})."
+    )
+    return fallback_prompt, fallback_summary
+
+
 async def generate_happiness_card(
     lang: str,
     character_code: str,
     mood_code: str,
-    user_photo_bytes: bytes | None = None
+    user_photo_bytes: bytes | None = None,
 ) -> tuple[str, bytes | None]:
     culture_desc = CULTURE_PROMPTS.get(lang, CULTURE_PROMPTS["ru"])
     char_desc = CHARACTER_PROMPTS.get(character_code, CHARACTER_PROMPTS["girl"])
@@ -108,10 +174,10 @@ async def generate_happiness_card(
                     contents=contents,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
-                        response_mime_type="application/json"
-                    )
+                        response_mime_type="application/json",
+                    ),
                 ),
-                timeout=12.0
+                timeout=12.0,
             )
             if text_response and text_response.text:
                 raw_json_text = text_response.text
