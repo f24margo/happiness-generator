@@ -2,8 +2,6 @@ import io
 import json
 import base64
 import asyncio
-import tempfile
-import os
 import subprocess
 from PIL import Image
 from google import genai
@@ -47,47 +45,6 @@ def _generate_cf_text2img_sync(prompt: str) -> bytes | None:
     b64_image = parsed.get("result", {}).get("image")
     return base64.b64decode(b64_image) if b64_image else None
 
-def _generate_cf_img2img_sync(prompt: str, photo_bytes: bytes) -> bytes | None:
-    if not CF_ACCOUNT_ID or not CF_API_TOKEN:
-        return None
-
-    img = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
-    img.thumbnail((512, 512))
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    image_int_array = list(buf.getvalue())
-
-    url = _build_cf_url("@cf/runwayml/stable-diffusion-v1-5-img2img")
-    payload_dict = {
-        "prompt": prompt,
-        "image": image_int_array,
-        "strength": 0.58,
-        "guidance": 8.5,
-        "num_steps": 20
-    }
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-        json.dump(payload_dict, tmp)
-        tmp_path = tmp.name
-
-    try:
-        cmd = [
-            "curl", "-s", "-X", "POST", url,
-            "-H", f"Authorization: Bearer {CF_API_TOKEN.strip()}",
-            "-H", "Content-Type: application/json",
-            "--data-binary", f"@{tmp_path}"
-        ]
-        res = subprocess.run(cmd, capture_output=True, timeout=50)
-        if res.returncode != 0 or not res.stdout:
-            return None
-        if res.stdout.startswith(b"\x89PNG") or res.stdout.startswith(b"\xff\xd8"):
-            return res.stdout
-        print("IMG2IMG RESP:", res.stdout[:200])
-        return None
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
 async def generate_happiness_card(
     lang: str,
     character_code: str,
@@ -98,12 +55,14 @@ async def generate_happiness_card(
     char_desc = CHARACTER_PROMPTS.get(character_code, CHARACTER_PROMPTS["girl"])
     mood_desc = MOOD_PROMPTS.get(mood_code, MOOD_PROMPTS["warm"])
 
-    photo_rule = (
-        "Study the attached photo carefully and create a FLATTERING, YOUTHFUL description of the person "
-        "(make them look 5-10 years younger, fresh, radiant, smooth skin without wrinkles, keeping their exact hairstyle, "
-        "hair color, eye color, glasses, smile, and clothing style) so the illustration looks like a charming, flattering magazine portrait."
-        if user_photo_bytes else f"STRICT CHARACTER APPEARANCE (Keep every detail, youthful and flattering): {char_desc}"
-    )
+    if user_photo_bytes:
+        photo_rule = (
+            "Study the attached photo carefully and create a FLATTERING, YOUTHFUL description of the person "
+            "(make them look 5-10 years younger, fresh, radiant, smooth skin without wrinkles, keeping their exact hairstyle, "
+            "hair color, eye color, glasses, smile, and clothing style) so the illustration looks like a charming magazine portrait."
+        )
+    else:
+        photo_rule = f"STRICT CHARACTER APPEARANCE (Keep every detail, youthful and flattering): {char_desc}"
 
     system_instruction = f"""
     You are the creative engine of the 'Happiness Generator' caricature bot.
@@ -153,24 +112,18 @@ async def generate_happiness_card(
     image_scene = data.get("image_scene", "")
     print(f"2. Сцена шаржа: {image_scene}")
 
-    image_bytes = None
     if user_photo_bytes:
-        full_prompt = f"{BASE_STYLE_PROMPT}, recognizable caricature portrait: {image_scene}"
-        print("3. Рисую портретный шарж по описанию фото через Cloudflare FLUX...")
-        try:
-            image_bytes = await asyncio.to_thread(_generate_cf_text2img_sync, full_prompt)
-            if image_bytes:
-                print("   Портретный шарж по фото успешно получен!")
-        except Exception as e:
-            print(f"   Ошибка Cloudflare FLUX: {e}")
+        full_prompt = f"{BASE_STYLE_PROMPT}, recognizable flattering caricature portrait: {image_scene}"
     else:
         full_prompt = f"{BASE_STYLE_PROMPT}, {char_desc} Action & Mood: {image_scene}"
-        print("3. Рисую постоянного героя через Cloudflare FLUX...")
-        try:
-            image_bytes = await asyncio.to_thread(_generate_cf_text2img_sync, full_prompt)
-            if image_bytes:
-                print("   Шарж героя успешно получен!")
-        except Exception as e:
-            print(f"   Ошибка Cloudflare FLUX: {e}")
+
+    image_bytes = None
+    print("3. Рисую шарж через Cloudflare FLUX...")
+    try:
+        image_bytes = await asyncio.to_thread(_generate_cf_text2img_sync, full_prompt)
+        if image_bytes:
+            print("   Шарж успешно получен!")
+    except Exception as e:
+        print(f"   Ошибка Cloudflare FLUX: {e}")
 
     return caption, image_bytes
