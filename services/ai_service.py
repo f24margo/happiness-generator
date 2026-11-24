@@ -6,7 +6,7 @@ import logging
 import aiohttp
 from google import genai
 from google.genai import types
-from PIL import Image
+from PIL import Image, ImageOps
 from config import CF_ACCOUNT_ID, CF_API_TOKEN, GEMINI_API_KEY
 from core.characters import CHARACTER_PROMPTS, CULTURE_PROMPTS, MOOD_PROMPTS
 
@@ -18,6 +18,12 @@ BASE_STYLE_PROMPT = (
     "smooth youthful glowing skin, NO harsh ink lines on the face, NO wrinkles, NO aging lines, "
     "bright sparkling eyes, charming modern magazine illustration style, "
     "expressive playful pose and witty props, clean colorful brushstrokes on warm paper, no signature, no text"
+)
+
+PHOTO_STYLE = (
+    "editorial gouache and watercolor caricature illustration, "
+    "expressive and playful, clean colorful brushstrokes on warm paper, "
+    "no text, no signature"
 )
 
 CARICATURE_PROMPT_SYSTEM_INSTRUCTION = """You are a prompt engineer for image generation and editing in Gemini.
@@ -39,9 +45,21 @@ def _build_cf_url(model_path: str) -> str:
 
 
 def _prepare_input_image(raw_bytes: bytes) -> Image.Image:
-    img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+    # Для Gemini: правильный поворот по EXIF и уменьшение
+    img = Image.open(io.BytesIO(raw_bytes))
+    img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((1024, 1024))
     return img
+
+
+def _prepare_cf_reference(raw_bytes: bytes) -> bytes:
+    # Для рисующей модели: правильный поворот и размер не больше 512 px
+    img = Image.open(io.BytesIO(raw_bytes))
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    img.thumbnail((512, 512))
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
 
 
 def _compress_output_jpeg(raw_bytes: bytes) -> bytes:
@@ -74,6 +92,35 @@ async def _generate_cf_text2img(prompt: str) -> bytes | None:
                 return None
             b64_image = parsed.get("result", {}).get("image")
             if not b64_image:
+                return None
+            raw_png = base64.b64decode(b64_image)
+            return await asyncio.to_thread(_compress_output_jpeg, raw_png)
+
+
+async def _generate_cf_with_reference(prompt: str, ref_png: bytes) -> bytes | None:
+    if not CF_ACCOUNT_ID or not CF_API_TOKEN:
+        return None
+    url = _build_cf_url("@cf/black-forest-labs/flux-2-klein-9b")
+    headers = {"Authorization": f"Bearer {CF_API_TOKEN.strip()}"}
+    form = aiohttp.FormData()
+    form.add_field("prompt", prompt)
+    form.add_field("width", "768")
+    form.add_field("height", "1024")
+    form.add_field(
+        "input_image_0", ref_png, filename="face.png", content_type="image/png"
+    )
+    timeout = aiohttp.ClientTimeout(total=60, connect=5)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, headers=headers, data=form) as resp:
+            if resp.status != 200:
+                err_text = await resp.text()
+                logger.warning("CF ref HTTP %s: %s", resp.status, err_text[:300])
+                return None
+            parsed = await resp.json()
+            b64_image = (parsed.get("result") or {}).get("image")
+            if not b64_image:
+                logger.warning("CF ref: нет картинки в ответе: %s", str(parsed)[:300])
                 return None
             raw_png = base64.b64decode(b64_image)
             return await asyncio.to_thread(_compress_output_jpeg, raw_png)
@@ -140,12 +187,20 @@ async def generate_happiness_card(
 
     if user_photo_bytes:
         photo_rule = (
-            "Study the attached photo carefully and create a FLATTERING, YOUTHFUL description of the person "
-            "(make them look 5-10 years younger, fresh, radiant, smooth skin without wrinkles, keeping their exact hairstyle, "
-            "hair color, eye color, glasses, smile, and clothing style) so the illustration looks like a charming magazine portrait."
+            "A photo of the person is attached. The image generator receives the same photo as a "
+            "reference, so DO NOT describe the person's face, age or skin. Use the photo only to "
+            "understand who the person is, their mood and what props or scene would suit them."
+        )
+        scene_rule = (
+            "A vivid editorial cartoon scene in English (max 25 words): pose, facial expression, "
+            "props and setting that match the caption. Do NOT describe facial features, age or skin."
         )
     else:
         photo_rule = f"STRICT CHARACTER APPEARANCE (Keep every detail, youthful and flattering): {char_desc}"
+        scene_rule = (
+            "A vivid editorial cartoon scene in English (max 25 words). Keep the exact character "
+            "appearance intact, adding witty facial mimicry and props matching the caption."
+        )
 
     system_instruction = f"""
     You are the creative engine of the 'Happiness Generator' caricature bot.
@@ -155,7 +210,7 @@ async def generate_happiness_card(
 
     Return strictly a JSON object with two keys:
 1. "caption": A short, punchy, memorable message (2-3 sentences) in the user's language ({lang}). Blend the selected mood/satire with light PG-13 flirtation, irony, or a witty twist on a famous quote.
-2. "image_scene": A vivid editorial cartoon scene in English (max 25 words). Keep the exact character appearance intact, adding witty facial mimicry and props matching the caption.
+2. "image_scene": {scene_rule}
     """
 
     contents = ["Generate the JSON response now."]
@@ -196,14 +251,26 @@ async def generate_happiness_card(
     logger.info("2. Сцена шаржа: %s", image_scene)
 
     if user_photo_bytes:
-        full_prompt = f"{BASE_STYLE_PROMPT}, recognizable flattering caricature portrait: {image_scene}"
+        full_prompt = (
+            f"Draw a caricature of the person in image 0 in this style: {PHOTO_STYLE}. "
+            "Keep the identity clearly recognizable: same face, same hairstyle, same glasses. "
+            "Exaggerate the most distinctive facial features moderately. "
+            f"Scene: {image_scene}. "
+            "Do not reuse the background of the photo. "
+            "Head and shoulders, full head visible with margin around."
+        )
     else:
         full_prompt = f"{BASE_STYLE_PROMPT}, {char_desc} Action & Mood: {image_scene}"
 
     image_bytes = None
     logger.info("3. Рисую шарж через Cloudflare FLUX...")
     try:
-        image_bytes = await _generate_cf_text2img(full_prompt)
+        if user_photo_bytes:
+            ref = await asyncio.to_thread(_prepare_cf_reference, user_photo_bytes)
+            image_bytes = await _generate_cf_with_reference(full_prompt, ref)
+        if not image_bytes:
+            fallback = f"{BASE_STYLE_PROMPT}, recognizable caricature portrait: {image_scene}"
+            image_bytes = await _generate_cf_text2img(fallback)
         if image_bytes:
             logger.info("   Шарж успешно получен (%d байт)!", len(image_bytes))
     except Exception as e:

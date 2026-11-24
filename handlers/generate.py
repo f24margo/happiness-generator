@@ -72,7 +72,7 @@ async def handle_photo_caricature(message: Message, bot: Bot):
 
         caption, img_bytes = await asyncio.wait_for(
             generate_happiness_card(lang, "custom_photo", mood_code, buf.getvalue()),
-            timeout=45.0
+            timeout=100.0
         )
         if img_bytes:
             out_photo = BufferedInputFile(img_bytes, filename="photo_caricature.jpg")
