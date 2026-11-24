@@ -13,7 +13,7 @@ from aiogram.types import (
 from database.models import get_or_create_user, can_generate, increment_usage
 from services.ai_service import generate_happiness_card, QuotaExceeded
 from core.locales import LOCALES
-from handlers.start import get_main_keyboard
+from handlers.start import get_main_keyboard, PROMPT_BTN
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -53,10 +53,20 @@ QUOTA_TEXT = {
     "es": "🎨 Los dibujos gratuitos de hoy se agotaron. Se renuevan por la noche, ¡vuelve mañana! Tu límite no se gastó.",
 }
 
+# Подсказка про сборку промпта (только для языков, где она есть)
+QUOTA_HINT = {
+    "ru": "\n\n🎁 А пока можно собрать промпт и нарисовать шарж в своём ИИ: кнопка ниже.",
+    "uk": "\n\n🎁 А поки можна зібрати промпт і намалювати шарж у своєму ШІ: кнопка нижче.",
+}
+
+
+def _quota_message(lang: str) -> str:
+    return QUOTA_TEXT.get(lang, QUOTA_TEXT["ru"]) + QUOTA_HINT.get(lang, "")
+
 
 def get_photo_keyboard(lang: str) -> InlineKeyboardMarkup:
     t = LOCALES[lang]
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [InlineKeyboardButton(text=t["btn_warm"], callback_data="pmood:warm"),
          InlineKeyboardButton(text=t["btn_wisdom"], callback_data="pmood:wisdom")],
         [InlineKeyboardButton(text=t["btn_greed"], callback_data="pmood:greed"),
@@ -64,7 +74,10 @@ def get_photo_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t["btn_lust"], callback_data="pmood:lust")],
         [InlineKeyboardButton(text=t["btn_char"], callback_data="menu:chars"),
          InlineKeyboardButton(text=t["btn_lang"], callback_data="menu:langs")],
-    ])
+    ]
+    if lang in PROMPT_BTN:
+        rows.append([InlineKeyboardButton(text=PROMPT_BTN[lang], callback_data="cfsm:start")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.callback_query(F.data.startswith("mood:"))
@@ -98,7 +111,7 @@ async def handle_mood_generate(callback: CallbackQuery):
             await increment_usage(user["user_id"], user["character_code"], mood_code, False, "")
     except QuotaExceeded:
         await callback.message.answer(
-            QUOTA_TEXT.get(lang, QUOTA_TEXT["ru"]),
+            _quota_message(lang),
             reply_markup=get_main_keyboard(lang),
         )
     except asyncio.TimeoutError:
@@ -188,7 +201,7 @@ async def handle_photo_mood(callback: CallbackQuery):
             )
     except QuotaExceeded:
         await callback.message.answer(
-            QUOTA_TEXT.get(lang, QUOTA_TEXT["ru"]),
+            _quota_message(lang),
             reply_markup=get_photo_keyboard(lang),
         )
     except asyncio.TimeoutError:
