@@ -1,10 +1,15 @@
 import io
-import random
 import asyncio
 import logging
 from contextlib import suppress
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    BufferedInputFile,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 from database.models import get_or_create_user, can_generate, increment_usage
 from services.ai_service import generate_happiness_card
 from core.locales import LOCALES
@@ -12,6 +17,48 @@ from handlers.start import get_main_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+# Фото, которое человек прислал и ждёт выбора настроения: {user_id: file_id}
+PENDING_PHOTOS: dict[int, str] = {}
+# Кто сейчас рисуется, чтобы двойное нажатие не тратило лимит
+BUSY_USERS: set[int] = set()
+
+MOODS = ["warm", "wisdom", "greed", "flattery", "lust"]
+
+ASK_MOOD = {
+    "ru": "📸 Фото получено! Выберите настроение шаржа:",
+    "uk": "📸 Фото отримано! Оберіть настрій шаржу:",
+    "en": "📸 Photo received! Pick the mood of your caricature:",
+    "es": "📸 ¡Foto recibida! Elige el ánimo de tu caricatura:",
+}
+
+PHOTO_EXPIRED = {
+    "ru": "Фото уже не помню. Пришлите его ещё раз 📸",
+    "uk": "Фото вже не пам'ятаю. Надішліть його ще раз 📸",
+    "en": "I no longer have that photo. Please send it again 📸",
+    "es": "Ya no tengo esa foto. Envíala de nuevo 📸",
+}
+
+BUSY_TEXT = {
+    "ru": "Уже рисую, подождите минуту 🎨",
+    "uk": "Вже малюю, зачекайте хвилину 🎨",
+    "en": "Already drawing, give me a minute 🎨",
+    "es": "Ya estoy dibujando, espera un minuto 🎨",
+}
+
+
+def get_photo_keyboard(lang: str) -> InlineKeyboardMarkup:
+    t = LOCALES[lang]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t["btn_warm"], callback_data="pmood:warm"),
+         InlineKeyboardButton(text=t["btn_wisdom"], callback_data="pmood:wisdom")],
+        [InlineKeyboardButton(text=t["btn_greed"], callback_data="pmood:greed"),
+         InlineKeyboardButton(text=t["btn_flattery"], callback_data="pmood:flattery")],
+        [InlineKeyboardButton(text=t["btn_lust"], callback_data="pmood:lust")],
+        [InlineKeyboardButton(text=t["btn_char"], callback_data="menu:chars"),
+         InlineKeyboardButton(text=t["btn_lang"], callback_data="menu:langs")],
+    ])
+
 
 @router.callback_query(F.data.startswith("mood:"))
 async def handle_mood_generate(callback: CallbackQuery):
@@ -52,8 +99,10 @@ async def handle_mood_generate(callback: CallbackQuery):
         with suppress(Exception):
             await status_msg.delete()
 
+
 @router.message(F.photo)
-async def handle_photo_caricature(message: Message, bot: Bot):
+async def handle_photo_received(message: Message):
+    """Фото пришло: запоминаем и спрашиваем настроение кнопками."""
     user = await get_or_create_user(message.from_user.id, message.from_user.username)
     lang = user["language"]
 
@@ -62,11 +111,49 @@ async def handle_photo_caricature(message: Message, bot: Bot):
         await message.answer(LOCALES[lang]["limit_reached"])
         return
 
-    status_msg = await message.answer(LOCALES[lang]["photo_received"])
-    mood_code = random.choice(["warm", "wisdom", "flattery", "greed"])
+    if len(PENDING_PHOTOS) > 500:
+        PENDING_PHOTOS.clear()
+    PENDING_PHOTOS[user["user_id"]] = message.photo[-1].file_id
+
+    await message.answer(
+        ASK_MOOD.get(lang, ASK_MOOD["ru"]),
+        reply_markup=get_photo_keyboard(lang),
+    )
+
+
+@router.callback_query(F.data.startswith("pmood:"))
+async def handle_photo_mood(callback: CallbackQuery):
+    """Настроение выбрано: рисуем шарж по запомненному фото."""
+    mood_code = callback.data.split(":", 1)[1]
+    if mood_code not in MOODS:
+        await callback.answer()
+        return
+
+    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
+    lang = user["language"]
+    user_id = user["user_id"]
+
+    file_id = PENDING_PHOTOS.get(user_id)
+    if not file_id:
+        await callback.answer(PHOTO_EXPIRED.get(lang, PHOTO_EXPIRED["ru"]), show_alert=True)
+        return
+
+    if user_id in BUSY_USERS:
+        await callback.answer(BUSY_TEXT.get(lang, BUSY_TEXT["ru"]), show_alert=True)
+        return
+
+    allowed, _ = await can_generate(user_id)
+    if not allowed:
+        await callback.answer(LOCALES[lang]["limit_reached"], show_alert=True)
+        return
+
+    await callback.answer()
+    BUSY_USERS.add(user_id)
+    status_msg = await callback.message.answer(LOCALES[lang]["photo_received"])
 
     try:
-        photo_file = await asyncio.wait_for(bot.get_file(message.photo[-1].file_id), timeout=15.0)
+        bot: Bot = callback.bot
+        photo_file = await asyncio.wait_for(bot.get_file(file_id), timeout=15.0)
         buf = io.BytesIO()
         await asyncio.wait_for(bot.download_file(photo_file.file_path, buf), timeout=20.0)
 
@@ -76,16 +163,30 @@ async def handle_photo_caricature(message: Message, bot: Bot):
         )
         if img_bytes:
             out_photo = BufferedInputFile(img_bytes, filename="photo_caricature.jpg")
-            sent = await message.answer_photo(photo=out_photo, caption=caption, reply_markup=get_main_keyboard(lang))
-            await increment_usage(user["user_id"], "custom_photo", mood_code, True, sent.photo[-1].file_id)
+            sent = await callback.message.answer_photo(
+                photo=out_photo,
+                caption=caption,
+                reply_markup=get_photo_keyboard(lang),
+            )
+            await increment_usage(user_id, "custom_photo", mood_code, True, sent.photo[-1].file_id)
         else:
-            await message.answer(caption, reply_markup=get_main_keyboard(lang))
+            await callback.message.answer(
+                f"{caption}\n\n(🎨 Картинка не получилась. Выберите настроение ещё раз)",
+                reply_markup=get_photo_keyboard(lang),
+            )
     except asyncio.TimeoutError:
-        logger.error("Timeout during photo generation for user %s", user["user_id"])
-        await message.answer("⏳ Обработка фото заняла слишком много времени. Попробуй отправить его ещё раз!", reply_markup=get_main_keyboard(lang))
+        logger.error("Timeout during photo generation for user %s", user_id)
+        await callback.message.answer(
+            "⏳ Рисование заняло слишком много времени. Нажмите кнопку ещё раз!",
+            reply_markup=get_photo_keyboard(lang),
+        )
     except Exception as e:
         logger.exception("Photo generation error: %s", e)
-        await message.answer("⏳ Сервер перегружен, попробуй отправить фото ещё раз через пару секунд!", reply_markup=get_main_keyboard(lang))
+        await callback.message.answer(
+            "⏳ Сервер перегружен, нажмите кнопку ещё раз через пару секунд!",
+            reply_markup=get_photo_keyboard(lang),
+        )
     finally:
+        BUSY_USERS.discard(user_id)
         with suppress(Exception):
             await status_msg.delete()
