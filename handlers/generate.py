@@ -11,7 +11,7 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 from database.models import get_or_create_user, can_generate, increment_usage
-from services.ai_service import generate_happiness_card
+from services.ai_service import generate_happiness_card, QuotaExceeded
 from core.locales import LOCALES
 from handlers.start import get_main_keyboard
 
@@ -44,6 +44,13 @@ BUSY_TEXT = {
     "uk": "Вже малюю, зачекайте хвилину 🎨",
     "en": "Already drawing, give me a minute 🎨",
     "es": "Ya estoy dibujando, espera un minuto 🎨",
+}
+
+QUOTA_TEXT = {
+    "ru": "🎨 Бесплатные картинки на сегодня закончились. Они обновятся ночью, приходите завтра! Ваш лимит не потрачен.",
+    "uk": "🎨 Безкоштовні картинки на сьогодні закінчилися. Вони оновляться вночі, приходьте завтра! Ваш ліміт не витрачено.",
+    "en": "🎨 Today's free drawings are used up. They refresh overnight, come back tomorrow! Your limit was not spent.",
+    "es": "🎨 Los dibujos gratuitos de hoy se agotaron. Se renuevan por la noche, ¡vuelve mañana! Tu límite no se gastó.",
 }
 
 
@@ -89,6 +96,11 @@ async def handle_mood_generate(callback: CallbackQuery):
                 reply_markup=get_main_keyboard(lang)
             )
             await increment_usage(user["user_id"], user["character_code"], mood_code, False, "")
+    except QuotaExceeded:
+        await callback.message.answer(
+            QUOTA_TEXT.get(lang, QUOTA_TEXT["ru"]),
+            reply_markup=get_main_keyboard(lang),
+        )
     except asyncio.TimeoutError:
         logger.error("Timeout during mood generation for user %s", user["user_id"])
         await callback.message.answer("⏳ Генерация заняла слишком много времени. Нажми на кнопку ещё раз!", reply_markup=get_main_keyboard(lang))
@@ -174,6 +186,11 @@ async def handle_photo_mood(callback: CallbackQuery):
                 f"{caption}\n\n(🎨 Картинка не получилась. Выберите настроение ещё раз)",
                 reply_markup=get_photo_keyboard(lang),
             )
+    except QuotaExceeded:
+        await callback.message.answer(
+            QUOTA_TEXT.get(lang, QUOTA_TEXT["ru"]),
+            reply_markup=get_photo_keyboard(lang),
+        )
     except asyncio.TimeoutError:
         logger.error("Timeout during photo generation for user %s", user_id)
         await callback.message.answer(
