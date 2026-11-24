@@ -14,6 +14,23 @@ from core.characters import CHARACTER_PROMPTS, CULTURE_PROMPTS, MOOD_PROMPTS
 logger = logging.getLogger(__name__)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+
+FALLBACK_SCENES = {
+    "warm": "a friendly confident smile, a cup of coffee in hand, soft golden light",
+    "wisdom": "a thoughtful half-smile, an open book in hand, a cozy study with bookshelves",
+    "greed": "hugging a giant piggy bank and a heap of gold coins with a sly smirk",
+    "flattery": "an over-the-top sweet smile, holding a golden crown, one hand behind the back with fingers crossed",
+    "lust": "a candle-lit dinner table, a single rose in hand, a charming wink",
+}
+
+FALLBACK_CAPTIONS = {
+    "ru": "Улыбка — самый дешёвый способ выглядеть лучше. А вам она к лицу!",
+    "uk": "Усмішка — найдешевший спосіб виглядати краще. А вам вона personally личить!",
+    "en": "A smile is the cheapest way to look better. And it suits you!",
+    "es": "Una sonrisa es la forma más barata de verte mejor. ¡Y a ti te sienta de maravilla!",
+}
+
 
 class QuotaExceeded(Exception):
     """Бесплатная суточная норма Cloudflare закончилась."""
@@ -154,6 +171,32 @@ async def _generate_cf_with_reference(prompt: str, ref_png: bytes) -> bytes | No
             return await asyncio.to_thread(_compress_output_jpeg, raw_png)
 
 
+async def _ask_gemini(contents: list, system_instruction: str) -> str | None:
+    """Спрашивает Gemini: две модели, по две попытки каждая."""
+    for model_name in GEMINI_MODELS:
+        for attempt in (1, 2):
+            try:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            response_mime_type="application/json",
+                        ),
+                    ),
+                    timeout=9.0,
+                )
+                if response and response.text:
+                    logger.info("   Успешно через %s", model_name)
+                    return response.text
+            except Exception as e:
+                logger.warning("   %s (попытка %d) не ответила: %s", model_name, attempt, e)
+                if attempt == 1:
+                    await asyncio.sleep(1.5)
+    return None
+
+
 async def build_caricature_prompt(
     likeness_details: str,
     style_emotion: str,
@@ -167,7 +210,7 @@ async def build_caricature_prompt(
         f"Scene & mood: {scene_mood.strip()}"
     )
 
-    for model_name in ["gemini-3.5-flash-lite", "gemini-3.8-flash"]:
+    for model_name in GEMINI_MODELS:
         try:
             response = await asyncio.wait_for(
                 client.aio.models.generate_content(
@@ -251,35 +294,23 @@ async def generate_happiness_card(
         contents.insert(0, pil_img)
 
     logger.info("1. Генерирую текст и сценарий шаржа через Gemini...")
-    raw_json_text = None
+    raw_json_text = await _ask_gemini(contents, system_instruction)
 
-    for model_name in ["gemini-3.5-flash-lite", "gemini-3.8-flash"]:
+    # Запасные значения на случай, если Gemini недоступен
+    caption = FALLBACK_CAPTIONS.get(lang, FALLBACK_CAPTIONS["ru"])
+    image_scene = FALLBACK_SCENES.get(mood_code, FALLBACK_SCENES["warm"])
+
+    if raw_json_text:
         try:
-            text_response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        response_mime_type="application/json",
-                    ),
-                ),
-                timeout=12.0,
-            )
-            if text_response and text_response.text:
-                raw_json_text = text_response.text
-                logger.info("   Успешно через %s", model_name)
-                break
+            clean_json = raw_json_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            data = json.loads(clean_json)
+            caption = data.get("caption") or caption
+            image_scene = data.get("image_scene") or image_scene
         except Exception as e:
-            logger.warning("   %s занята: %s", model_name, e)
+            logger.warning("   Не удалось разобрать ответ Gemini, берём запасной текст: %s", e)
+    else:
+        logger.warning("   Gemini недоступен, берём запасную подпись и сцену")
 
-    if not raw_json_text:
-        raise RuntimeError("Текстовые модели временно недоступны")
-
-    clean_json = raw_json_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    data = json.loads(clean_json)
-    caption = data.get("caption", "✨ Улыбнись этому дню!")
-    image_scene = data.get("image_scene", "")
     logger.info("2. Сцена шаржа: %s", image_scene)
 
     if user_photo_bytes:
