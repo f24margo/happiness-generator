@@ -3,6 +3,7 @@ import base64
 import io
 import json
 import logging
+from datetime import datetime, timezone
 import aiohttp
 from google import genai
 from google.genai import types
@@ -12,6 +13,31 @@ from core.characters import CHARACTER_PROMPTS, CULTURE_PROMPTS, MOOD_PROMPTS
 
 logger = logging.getLogger(__name__)
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+class QuotaExceeded(Exception):
+    """Бесплатная суточная норма Cloudflare закончилась."""
+
+
+_quota_day: str | None = None
+
+
+def _today_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _quota_exhausted_today() -> bool:
+    return _quota_day == _today_utc()
+
+
+def _raise_if_quota(status: int, text: str) -> None:
+    global _quota_day
+    low = text.lower()
+    if status == 429 or "neurons" in low or "allocation" in low or "4006" in low:
+        _quota_day = _today_utc()
+        logger.warning("Cloudflare: суточная норма исчерпана (HTTP %s)", status)
+        raise QuotaExceeded()
+
 
 BASE_STYLE_PROMPT = (
     "flattering stylish editorial gouache and watercolor cartoon illustration, "
@@ -45,7 +71,6 @@ def _build_cf_url(model_path: str) -> str:
 
 
 def _prepare_input_image(raw_bytes: bytes) -> Image.Image:
-    # Для Gemini: правильный поворот по EXIF и уменьшение
     img = Image.open(io.BytesIO(raw_bytes))
     img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((1024, 1024))
@@ -53,7 +78,6 @@ def _prepare_input_image(raw_bytes: bytes) -> Image.Image:
 
 
 def _prepare_cf_reference(raw_bytes: bytes) -> bytes:
-    # Для рисующей модели: правильный поворот и размер не больше 512 px
     img = Image.open(io.BytesIO(raw_bytes))
     img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((512, 512))
@@ -85,10 +109,12 @@ async def _generate_cf_text2img(prompt: str) -> bytes | None:
             if resp.status != 200:
                 err_text = await resp.text()
                 logger.warning("CF HTTP %s: %s", resp.status, err_text[:200])
+                _raise_if_quota(resp.status, err_text)
                 return None
             parsed = await resp.json()
             if not parsed.get("success"):
                 logger.warning("CF API error: %s", str(parsed)[:200])
+                _raise_if_quota(200, str(parsed))
                 return None
             b64_image = parsed.get("result", {}).get("image")
             if not b64_image:
@@ -116,11 +142,13 @@ async def _generate_cf_with_reference(prompt: str, ref_png: bytes) -> bytes | No
             if resp.status != 200:
                 err_text = await resp.text()
                 logger.warning("CF ref HTTP %s: %s", resp.status, err_text[:300])
+                _raise_if_quota(resp.status, err_text)
                 return None
             parsed = await resp.json()
             b64_image = (parsed.get("result") or {}).get("image")
             if not b64_image:
                 logger.warning("CF ref: нет картинки в ответе: %s", str(parsed)[:300])
+                _raise_if_quota(200, str(parsed))
                 return None
             raw_png = base64.b64decode(b64_image)
             return await asyncio.to_thread(_compress_output_jpeg, raw_png)
@@ -181,6 +209,10 @@ async def generate_happiness_card(
     mood_code: str,
     user_photo_bytes: bytes | None = None,
 ) -> tuple[str, bytes | None]:
+    # Норма Cloudflare на сегодня уже закончилась: не тратим время и Gemini
+    if _quota_exhausted_today():
+        raise QuotaExceeded()
+
     culture_desc = CULTURE_PROMPTS.get(lang, CULTURE_PROMPTS["ru"])
     char_desc = CHARACTER_PROMPTS.get(character_code, CHARACTER_PROMPTS["girl"])
     mood_desc = MOOD_PROMPTS.get(mood_code, MOOD_PROMPTS["warm"])
@@ -254,9 +286,12 @@ async def generate_happiness_card(
         full_prompt = (
             f"Draw a caricature of the person in image 0 in this style: {PHOTO_STYLE}. "
             "Keep the identity clearly recognizable: same face, same hairstyle, same glasses. "
-            "Keep the real eye shape, nose shape and skin tone from the photo; exaggerate only the head size and one distinctive feature slightly. Keep wrinkles and age as in the photo."
+            "Keep the real eye shape, nose shape and skin tone from the photo; "
+            "exaggerate only the head size and one distinctive feature slightly. "
+            "Keep wrinkles and age as in the photo. "
             f"Scene: {image_scene}. "
             "Do not reuse the background of the photo. "
+            "Never put any text, letters or signs in the picture. "
             "Head and shoulders, full head visible with margin around."
         )
     else:
@@ -273,6 +308,8 @@ async def generate_happiness_card(
             image_bytes = await _generate_cf_text2img(fallback)
         if image_bytes:
             logger.info("   Шарж успешно получен (%d байт)!", len(image_bytes))
+    except QuotaExceeded:
+        raise
     except Exception as e:
         logger.warning("   Ошибка Cloudflare FLUX: %s", e)
 
