@@ -143,7 +143,7 @@ async def _generate_cf_text2img(prompt: str) -> bytes | None:
 async def _generate_cf_with_reference(prompt: str, ref_png: bytes) -> bytes | None:
     if not CF_ACCOUNT_ID or not CF_API_TOKEN:
         return None
-    url = _build_cf_url("@cf/black-forest-labs/flux-2-klein-9b")
+    url = _build_cf_url("@cf/black-forest-labs/flux-2-klein-4b")
     headers = {"Authorization": f"Bearer {CF_API_TOKEN.strip()}"}
     form = aiohttp.FormData()
     form.add_field("prompt", prompt)
