@@ -6,9 +6,16 @@ from core.locales import LOCALES
 
 router = Router()
 
+# Кнопка сборки промпта для своего ИИ (сама сборка пока на русском)
+PROMPT_BTN = {
+    "ru": "🎁 Промпт для своего ИИ",
+    "uk": "🎁 Промпт для свого ШІ",
+}
+
+
 def get_main_keyboard(lang: str) -> InlineKeyboardMarkup:
     t = LOCALES[lang]
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [InlineKeyboardButton(text=t["btn_warm"], callback_data="mood:warm"),
          InlineKeyboardButton(text=t["btn_wisdom"], callback_data="mood:wisdom")],
         [InlineKeyboardButton(text=t["btn_greed"], callback_data="mood:greed"),
@@ -16,21 +23,27 @@ def get_main_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t["btn_lust"], callback_data="mood:lust")],
         [InlineKeyboardButton(text=t["btn_char"], callback_data="menu:chars"),
          InlineKeyboardButton(text=t["btn_lang"], callback_data="menu:langs")],
-        [InlineKeyboardButton(text=t["btn_vip"], callback_data="menu:vip")]
-    ])
+    ]
+    if lang in PROMPT_BTN:
+        rows.append([InlineKeyboardButton(text=PROMPT_BTN[lang], callback_data="cfsm:start")])
+    rows.append([InlineKeyboardButton(text=t["btn_vip"], callback_data="menu:vip")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 def get_chars_keyboard(lang: str) -> InlineKeyboardMarkup:
     chars = LOCALES[lang]["chars"]
     buttons = [[InlineKeyboardButton(text=name, callback_data=f"setchar:{code}")] for code, name in chars.items()]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
 def get_langs_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang:ru"),
-         InlineKeyboardButton(text="��🇺🇦 Українська", callback_data="setlang:uk")],
+         InlineKeyboardButton(text="🇺🇦 Українська", callback_data="setlang:uk")],
         [InlineKeyboardButton(text="🇬🇧 English", callback_data="setlang:en"),
          InlineKeyboardButton(text="🇪🇸 Español", callback_data="setlang:es")]
     ])
+
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
@@ -46,12 +59,14 @@ async def cmd_start(message: Message):
         parse_mode="Markdown"
     )
 
+
 @router.callback_query(F.data == "menu:chars")
 async def show_chars(callback: CallbackQuery):
     await callback.answer()
     user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
     lang = user["language"]
     await callback.message.answer(LOCALES[lang]["choose_char"], reply_markup=get_chars_keyboard(lang))
+
 
 @router.callback_query(F.data.startswith("setchar:"))
 async def set_char(callback: CallbackQuery):
@@ -68,11 +83,13 @@ async def set_char(callback: CallbackQuery):
         parse_mode="Markdown"
     )
 
+
 @router.callback_query(F.data == "menu:langs")
 async def show_langs(callback: CallbackQuery):
     await callback.answer()
     user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
     await callback.message.answer(LOCALES[user["language"]]["choose_lang"], reply_markup=get_langs_keyboard())
+
 
 @router.callback_query(F.data.startswith("setlang:"))
 async def set_lang(callback: CallbackQuery):
@@ -87,6 +104,7 @@ async def set_lang(callback: CallbackQuery):
         reply_markup=get_main_keyboard(lang),
         parse_mode="Markdown"
     )
+
 
 @router.callback_query(F.data == "menu:vip")
 async def show_vip(callback: CallbackQuery):
