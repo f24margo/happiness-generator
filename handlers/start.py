@@ -3,6 +3,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from database.models import get_or_create_user, update_user_field, can_generate
 from core.locales import LOCALES
+from core.styles import STYLES, DEFAULT_STYLE
 
 router = Router()
 
@@ -11,6 +12,28 @@ PROMPT_BTN = {
     "ru": "🎁 Промпт для своего ИИ",
     "uk": "🎁 Промпт для свого ШІ",
 }
+
+# Кнопка выбора стиля рисунка
+STYLE_BTN = {
+    "ru": "🎨 Стиль",
+    "uk": "🎨 Стиль",
+    "en": "🎨 Style",
+    "es": "🎨 Estilo",
+}
+
+# Выбранный стиль каждого человека. Хранится в памяти бота:
+# после перезапуска у всех снова стиль по умолчанию.
+USER_STYLES: dict[int, str] = {}
+
+
+def get_user_style(user_id: int) -> str:
+    code = USER_STYLES.get(user_id, DEFAULT_STYLE)
+    return code if code in STYLES else DEFAULT_STYLE
+
+
+def style_name(code: str, lang: str) -> str:
+    names = STYLES[code]["names"]
+    return names.get(lang) or names["ru"]
 
 
 def get_main_keyboard(lang: str) -> InlineKeyboardMarkup:
@@ -23,10 +46,22 @@ def get_main_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t["btn_lust"], callback_data="mood:lust")],
         [InlineKeyboardButton(text=t["btn_char"], callback_data="menu:chars"),
          InlineKeyboardButton(text=t["btn_lang"], callback_data="menu:langs")],
+        [InlineKeyboardButton(text=STYLE_BTN.get(lang, STYLE_BTN["ru"]), callback_data="menu:styles")],
     ]
     if lang in PROMPT_BTN:
         rows.append([InlineKeyboardButton(text=PROMPT_BTN[lang], callback_data="cfsm:start")])
     rows.append([InlineKeyboardButton(text=t["btn_vip"], callback_data="menu:vip")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_styles_keyboard(lang: str, current: str) -> InlineKeyboardMarkup:
+    rows = []
+    for code in STYLES:
+        mark = "✅ " if code == current else ""
+        rows.append([InlineKeyboardButton(
+            text=mark + style_name(code, lang),
+            callback_data=f"setstyle:{code}",
+        )])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

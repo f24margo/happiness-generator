@@ -13,7 +13,16 @@ from aiogram.types import (
 from database.models import get_or_create_user, can_generate, increment_usage
 from services.ai_service import generate_happiness_card, QuotaExceeded
 from core.locales import LOCALES
-from handlers.start import get_main_keyboard, PROMPT_BTN
+from core.styles import STYLES
+from handlers.start import (
+    get_main_keyboard,
+    PROMPT_BTN,
+    STYLE_BTN,
+    USER_STYLES,
+    get_user_style,
+    get_styles_keyboard,
+    style_name,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -59,6 +68,27 @@ QUOTA_HINT = {
     "uk": "\n\n🎁 А поки можна зібрати промпт і намалювати шарж у своєму ШІ: кнопка нижче.",
 }
 
+CHOOSE_STYLE = {
+    "ru": "🎨 Выберите стиль рисунка:",
+    "uk": "🎨 Оберіть стиль малюнка:",
+    "en": "🎨 Choose the drawing style:",
+    "es": "🎨 Elige el estilo del dibujo:",
+}
+
+STYLE_SET = {
+    "ru": "Стиль выбран: {name}.",
+    "uk": "Стиль обрано: {name}.",
+    "en": "Style selected: {name}.",
+    "es": "Estilo elegido: {name}.",
+}
+
+MENU_HINT = {
+    "ru": "Выберите настроение или пришлите фото 📸",
+    "uk": "Оберіть настрій або надішліть фото 📸",
+    "en": "Pick a mood or send a photo 📸",
+    "es": "Elige un ánimo o envía una foto 📸",
+}
+
 
 def _quota_message(lang: str) -> str:
     return QUOTA_TEXT.get(lang, QUOTA_TEXT["ru"]) + QUOTA_HINT.get(lang, "")
@@ -74,10 +104,54 @@ def get_photo_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t["btn_lust"], callback_data="pmood:lust")],
         [InlineKeyboardButton(text=t["btn_char"], callback_data="menu:chars"),
          InlineKeyboardButton(text=t["btn_lang"], callback_data="menu:langs")],
+        [InlineKeyboardButton(text=STYLE_BTN.get(lang, STYLE_BTN["ru"]), callback_data="menu:styles")],
     ]
     if lang in PROMPT_BTN:
         rows.append([InlineKeyboardButton(text=PROMPT_BTN[lang], callback_data="cfsm:start")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "menu:styles")
+async def show_styles(callback: CallbackQuery):
+    """Показать список стилей."""
+    await callback.answer()
+    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
+    lang = user["language"]
+    current = get_user_style(user["user_id"])
+    await callback.message.answer(
+        CHOOSE_STYLE.get(lang, CHOOSE_STYLE["ru"]),
+        reply_markup=get_styles_keyboard(lang, current),
+    )
+
+
+@router.callback_query(F.data.startswith("setstyle:"))
+async def set_style(callback: CallbackQuery):
+    """Стиль выбран: запоминаем и возвращаем к выбору настроения."""
+    code = callback.data.split(":", 1)[1]
+    if code not in STYLES:
+        await callback.answer()
+        return
+
+    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
+    lang = user["language"]
+    user_id = user["user_id"]
+
+    if len(USER_STYLES) > 5000:
+        USER_STYLES.clear()
+    USER_STYLES[user_id] = code
+    await callback.answer()
+
+    text = STYLE_SET.get(lang, STYLE_SET["ru"]).format(name=style_name(code, lang))
+    if user_id in PENDING_PHOTOS:
+        await callback.message.answer(
+            text + "\n\n" + ASK_MOOD.get(lang, ASK_MOOD["ru"]),
+            reply_markup=get_photo_keyboard(lang),
+        )
+    else:
+        await callback.message.answer(
+            text + "\n\n" + MENU_HINT.get(lang, MENU_HINT["ru"]),
+            reply_markup=get_main_keyboard(lang),
+        )
 
 
 @router.callback_query(F.data.startswith("mood:"))
@@ -96,7 +170,12 @@ async def handle_mood_generate(callback: CallbackQuery):
 
     try:
         caption, img_bytes = await asyncio.wait_for(
-            generate_happiness_card(lang, user["character_code"], mood_code),
+            generate_happiness_card(
+                lang,
+                user["character_code"],
+                mood_code,
+                style_code=get_user_style(user["user_id"]),
+            ),
             timeout=40.0
         )
         if img_bytes:
@@ -183,7 +262,13 @@ async def handle_photo_mood(callback: CallbackQuery):
         await asyncio.wait_for(bot.download_file(photo_file.file_path, buf), timeout=20.0)
 
         caption, img_bytes = await asyncio.wait_for(
-            generate_happiness_card(lang, "custom_photo", mood_code, buf.getvalue()),
+            generate_happiness_card(
+                lang,
+                "custom_photo",
+                mood_code,
+                buf.getvalue(),
+                style_code=get_user_style(user_id),
+            ),
             timeout=100.0
         )
         if img_bytes:
