@@ -40,7 +40,8 @@ _quota_day: str | None = None
 
 
 def _today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%d %H:") + str(now.minute // 30)
 
 
 def _quota_exhausted_today() -> bool:
