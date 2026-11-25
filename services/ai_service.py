@@ -317,7 +317,10 @@ async def generate_happiness_card(
     if user_photo_bytes:
         full_prompt = (
             f"Draw a caricature of the person in image 0 in this style: {PHOTO_STYLE}. "
-            "Keep the identity clearly recognizable: same face, same hairstyle, same glasses. "
+            "Keep the identity clearly recognizable: same face and same hairstyle. "
+            "Draw only what is visible in the photo. "
+            "If the person wears no glasses, draw no glasses. "
+            "Add no accessories that are not in the photo. "
             "Keep the real eye shape, nose shape and skin tone from the photo; "
             "exaggerate only the head size and one distinctive feature slightly. "
             "Keep wrinkles and age as in the photo. "
