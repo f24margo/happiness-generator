@@ -10,6 +10,7 @@ from google.genai import types
 from PIL import Image, ImageOps
 from config import CF_ACCOUNT_ID, CF_API_TOKEN, GEMINI_API_KEY
 from core.characters import CHARACTER_PROMPTS, CULTURE_PROMPTS, MOOD_PROMPTS
+from core.styles import style_photo_prompt, style_hero_prompt
 
 logger = logging.getLogger(__name__)
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -26,7 +27,7 @@ FALLBACK_SCENES = {
 
 FALLBACK_CAPTIONS = {
     "ru": "Улыбка — самый дешёвый способ выглядеть лучше. А вам она к лицу!",
-    "uk": "Усмішка — найдешевший спосіб виглядати краще. А вам вона personally личить!",
+    "uk": "Усмішка — найдешевший спосіб виглядати краще. А вам вона личить!",
     "en": "A smile is the cheapest way to look better. And it suits you!",
     "es": "Una sonrisa es la forma más barata de verte mejor. ¡Y a ti te sienta de maravilla!",
 }
@@ -62,12 +63,6 @@ BASE_STYLE_PROMPT = (
     "smooth youthful glowing skin, NO harsh ink lines on the face, NO wrinkles, NO aging lines, "
     "bright sparkling eyes, charming modern magazine illustration style, "
     "expressive playful pose and witty props, clean colorful brushstrokes on warm paper, no signature, no text"
-)
-
-PHOTO_STYLE = (
-    "editorial gouache and watercolor caricature illustration, "
-    "expressive and playful, clean colorful brushstrokes on warm paper, "
-    "no text, no signature"
 )
 
 CARICATURE_PROMPT_SYSTEM_INSTRUCTION = """You are a prompt engineer for image generation and editing in Gemini.
@@ -252,8 +247,9 @@ async def generate_happiness_card(
     character_code: str,
     mood_code: str,
     user_photo_bytes: bytes | None = None,
+    style_code: str = "gouache",
 ) -> tuple[str, bytes | None]:
-    # Норма Cloudflare на сегодня уже закончилась: не тратим время и Gemini
+    # Норма Cloudflare ещё закрыта: не тратим время и Gemini
     if _quota_exhausted_today():
         raise QuotaExceeded()
 
@@ -314,9 +310,12 @@ async def generate_happiness_card(
 
     logger.info("2. Сцена шаржа: %s", image_scene)
 
+    hero_style = style_hero_prompt(style_code, BASE_STYLE_PROMPT)
+
     if user_photo_bytes:
         full_prompt = (
-            f"Draw a caricature of the person in image 0 in this style: {PHOTO_STYLE}. "
+            f"Draw a caricature of the person in image 0 in this style: {style_photo_prompt(style_code)}. "
+            "Render the whole picture, including the scene, strictly in this style. "
             "Keep the identity clearly recognizable: same face and same hairstyle. "
             "Draw only what is visible in the photo. "
             "If the person wears no glasses, draw no glasses. "
@@ -330,7 +329,9 @@ async def generate_happiness_card(
             "Head and shoulders, full head visible with margin around."
         )
     else:
-        full_prompt = f"{BASE_STYLE_PROMPT}, {char_desc} Action & Mood: {image_scene}"
+        full_prompt = f"{hero_style}, {char_desc} Action & Mood: {image_scene}"
+
+    logger.info("   Стиль: %s. Запрос к FLUX: %s", style_code, full_prompt[:500])
 
     image_bytes = None
     logger.info("3. Рисую шарж через Cloudflare FLUX...")
@@ -339,7 +340,7 @@ async def generate_happiness_card(
             ref = await asyncio.to_thread(_prepare_cf_reference, user_photo_bytes)
             image_bytes = await _generate_cf_with_reference(full_prompt, ref)
         if not image_bytes:
-            fallback = f"{BASE_STYLE_PROMPT}, recognizable caricature portrait: {image_scene}"
+            fallback = f"{hero_style}, recognizable caricature portrait: {image_scene}"
             image_bytes = await _generate_cf_text2img(fallback)
         if image_bytes:
             logger.info("   Шарж успешно получен (%d байт)!", len(image_bytes))
