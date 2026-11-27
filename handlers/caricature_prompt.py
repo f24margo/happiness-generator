@@ -1,218 +1,477 @@
+import html
+from contextlib import suppress
+
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from services.ai_service import build_caricature_prompt
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
+
+from core.styles import STYLES, style_technique_prompt
 
 router = Router()
 
 
-class CaricaturePromptFSM(StatesGroup):
-    likeness_details = State()
-    style_emotion = State()
-    scene_mood = State()
+class PromptFSM(StatesGroup):
+    exclude_text = State()
+    scene_text = State()
 
 
-LIKENESS_PRESETS: dict[str, str] = {
-    "face_hair": "строго сохранить черты лица, пропорции и причёску с прикреплённого фото",
-    "beard_glasses": "сохранить форму лица, бороду/усы или очки и живую мимику с фото",
-    "with_prop": "сохранить узнаваемость с фото и добавить в руку кружку кофе или гаджет",
+# ---------- Режимы ----------
+MODES = {
+    "portrait": "🖼 Портрет: максимально похоже на фото",
+    "caricature": "🎭 Шарж: от мягкого гротеска до доброй сатиры",
 }
 
-STYLE_PRESETS: dict[str, str] = {
-    "friendly_smirk": "дружеский шарж с лёгким гротеском и хитрой улыбкой",
-    "fig_3d": "стиль 3D-фигурки с выразительной мимикой и эмоцией восторга",
-    "comic_wink": "яркий шарж в стиле современной иллюстрации/комикса с прищуром",
+# ---------- Ступени ----------
+PORTRAIT_LEVELS = {
+    "asphoto": {
+        "label": "📷 Как на фото",
+        "text": (
+            "Keep the likeness exact: {keep}. "
+            "Do not retouch and do not make the person look younger or older."
+        ),
+    },
+    "retouch": {
+        "label": "✨ Лёгкая ретушь",
+        "text": (
+            "Keep the likeness exact: {keep}. "
+            "Apply only a light retouch: softer lighting, remove accidental shadows "
+            "and blemishes, keep the real wrinkles and age."
+        ),
+    },
+    "warm": {
+        "label": "😊 Тёплый взгляд, лёгкая улыбка",
+        "text": (
+            "Keep the likeness exact: {keep}. "
+            "Make the expression slightly warmer: a gentle natural smile and a kind look. "
+            "Do not change the age."
+        ),
+    },
 }
 
-SCENE_PRESETS: dict[str, str] = {
-    "desk_warm": "за рабочим столом с ноутбуком, тёплый уютный свет и лёгкий юмор",
-    "cozy_chill": "в уютной домашней обстановке с чашкой чая, спокойное доброе настроение",
-    "dynamic_pop": "на ярком выразительном фоне с динамичным освещением и драйвом",
+CARICATURE_LEVELS = {
+    "soft": {
+        "label": "🙂 Мягкий гротеск",
+        "text": (
+            "Keep the person clearly recognizable. "
+            "Choose the 2-3 most distinctive facial features yourself and exaggerate them gently; "
+            "make the head slightly larger than the body. Kind, friendly expression."
+        ),
+    },
+    "fun": {
+        "label": "😄 Весёлый шарж",
+        "text": (
+            "Keep the person clearly recognizable. "
+            "Choose the 2-3 most distinctive facial features yourself and exaggerate them noticeably; "
+            "use a lively, expressive face and a clearly larger head."
+        ),
+    },
+    "satire": {
+        "label": "🎭 Добрая сатира",
+        "text": (
+            "Keep the person clearly recognizable. "
+            "Choose the 2-3 most distinctive facial features yourself and exaggerate them noticeably. "
+            "Add a simple prop or detail that kindly mocks a human trait such as greed, flattery "
+            "or self-importance; aim the joke at the behavior, never at the person's body, age or looks."
+        ),
+    },
 }
 
+# ---------- Сцены ----------
+SCENES = {
+    "plain": {"label": "⬜ Простой фон", "text": None},
+    "desk": {
+        "label": "💻 За столом с ноутбуком",
+        "text": "sitting at a desk with a laptop and a cup of coffee, warm cozy light",
+    },
+    "home": {
+        "label": "🏡 Дома с чашкой чая",
+        "text": "in a cozy home interior with a cup of tea, calm kind mood",
+    },
+    "books": {
+        "label": "📚 Среди книг",
+        "text": "in a study with shelves of books, holding an open book",
+    },
+    "garden": {
+        "label": "🌿 В саду",
+        "text": "in a blooming garden on a sunny day",
+    },
+    "piggy": {
+        "label": "💰 С копилкой",
+        "text": "hugging a giant piggy bank and a heap of gold coins with a sly smirk",
+    },
+    "crown": {
+        "label": "👑 С короной",
+        "text": "holding a golden crown with an over-sweet smile, one hand behind the back with fingers crossed",
+    },
+    "rose": {
+        "label": "🌹 С розой",
+        "text": "holding a single rose with a charming wink and a playful smile, fully dressed",
+    },
+    "dynamic": {
+        "label": "⚡ Яркий фон и драйв",
+        "text": "on a bold expressive abstract background with dynamic energy",
+    },
+}
 
-def _step1_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="👤 Черты лица и причёска с фото", callback_data="cfsm:s1:face_hair")],
-            [InlineKeyboardButton(text="👓 Борода / очки и мимика с фото", callback_data="cfsm:s1:beard_glasses")],
-            [InlineKeyboardButton(text="☕ Сходство с фото + кружка/деталь", callback_data="cfsm:s1:with_prop")],
-            [InlineKeyboardButton(text="✖ Отмена", callback_data="cfsm:cancel")],
-        ]
-    )
+KEEP_PLAIN = "same pose, same angle, same expression, same clothing and hairstyle"
+KEEP_SCENE = "same face, same head angle, same expression and hairstyle"
+PLAIN_SENTENCE = "Plain simple background, no scene and no props."
+
+RULES = (
+    "Draw glasses, wrinkles and facial hair only if they are visible in the photo; "
+    "if the person wears no glasses, draw no glasses. "
+    "The gaze is directed straight at the viewer. "
+    "Render the whole picture strictly in this style. "
+    "No text, no letters, no signs, no signature."
+)
+
+# ---------- Фразы-поправки (для отправки ИИ следующим сообщением) ----------
+COMMON_FIXES = [
+    ("Очки", [
+        "Add the glasses exactly as in the photo.",
+        "Remove the glasses: the person does not wear them.",
+    ]),
+    ("Взгляд", ["Make the gaze look straight at the viewer."]),
+    ("Надписи", ["Remove all text and letters from the image."]),
+    ("Сходство", ["Make the face more similar to the person in the photo."]),
+]
+PORTRAIT_FIXES = COMMON_FIXES + [
+    ("Обработка", ["Less retouching: keep the wrinkles and details exactly as in the photo."]),
+]
+CARICATURE_FIXES = COMMON_FIXES + [
+    ("Сила шаржа", [
+        "Exaggerate the distinctive features a bit more.",
+        "Reduce the exaggeration and keep it closer to the photo.",
+    ]),
+]
+
+# ---------- Тексты шагов ----------
+TEXT_MODE = (
+    "🎁 <b>Промпт для вашего ИИ</b>\n"
+    "Шаг 1 из 4. <b>Что рисуем?</b>\n\n"
+    "Фото я не вижу и не храню: вы прикрепите его у себя, в своём ИИ (Gemini, ChatGPT и др.)."
+)
+TEXT_STYLE = "Шаг 2 из 4. <b>В каком стиле?</b>"
+TEXT_LEVEL_PORTRAIT = (
+    "Шаг 3 из 4. <b>Насколько обрабатывать лицо?</b>\n"
+    "Чем больше обработки, тем слабее сходство с фото."
+)
+TEXT_LEVEL_CARICATURE = (
+    "Шаг 3 из 4. <b>Какой силы шарж?</b>\n"
+    "От мягкого гротеска до доброй сатиры."
+)
+TEXT_EXCLUDE = (
+    "Шаг 3 из 4. <b>Что не преувеличивать?</b>\n"
+    "Напишите одним-двумя словами (например: уши, лоб) или нажмите «Пропустить»."
+)
+TEXT_SCENE = "Шаг 4 из 4. <b>Сцена и фон.</b>\nВыберите вариант или опишите свой."
+TEXT_ASK_SCENE = (
+    "Опишите сцену своими словами, одной строкой "
+    "(например: «на рыбалке с большой рыбой»)."
+)
+TEXT_RESTART = "Бот обновлялся, начнём заново.\n\n"
 
 
-def _step2_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="😏 Дружеский шарж + ухмылка", callback_data="cfsm:s2:friendly_smirk")],
-            [InlineKeyboardButton(text="🧸 3D-фигурка + эмоция восторга", callback_data="cfsm:s2:fig_3d")],
-            [InlineKeyboardButton(text="🎨 Иллюстрация/комикс + прищур", callback_data="cfsm:s2:comic_wink")],
-            [InlineKeyboardButton(text="✖ Отмена", callback_data="cfsm:cancel")],
-        ]
-    )
+# ---------- Вспомогательные функции ----------
+def _cancel_row() -> list:
+    return [InlineKeyboardButton(text="✖ Отмена", callback_data="cfsm:cancel")]
 
 
-def _step3_keyboard(selected_scene: str | None = None) -> InlineKeyboardMarkup:
+def _style_name(code: str) -> str:
+    names = STYLES[code].get("names", {})
+    return names.get("ru") or next(iter(names.values()), code)
+
+
+def _clean(text: str | None) -> str:
+    return " ".join((text or "").split())[:120]
+
+
+def _modes_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="💻 Рабочий стол и тёплый свет", callback_data="cfsm:s3:desk_warm")],
-        [InlineKeyboardButton(text="🏡 Уютная обстановка и отдых", callback_data="cfsm:s3:cozy_chill")],
-        [InlineKeyboardButton(text="⚡ Яркий фон и драйв", callback_data="cfsm:s3:dynamic_pop")],
+        [InlineKeyboardButton(text=label, callback_data=f"cfsm:mode:{code}")]
+        for code, label in MODES.items()
     ]
-    if selected_scene:
-        rows.append([InlineKeyboardButton(text="✨ Собрать промпт", callback_data="cfsm:build")])
-    rows.append([InlineKeyboardButton(text="✖ Отмена", callback_data="cfsm:cancel")])
+    rows.append(_cancel_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _result_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Собрать новый промпт", callback_data="cfsm:start")],
-        ]
-    )
+def _styles_kb() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=_style_name(code), callback_data=f"cfsm:style:{code}")]
+        for code in STYLES
+    ]
+    rows.append(_cancel_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _send_step1(target: Message | CallbackQuery, state: FSMContext) -> None:
+def _levels_kb(levels: dict) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=v["label"], callback_data=f"cfsm:lvl:{k}")]
+        for k, v in levels.items()
+    ]
+    rows.append(_cancel_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _exclude_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Пропустить", callback_data="cfsm:skipx")],
+        _cancel_row(),
+    ])
+
+
+def _scenes_kb() -> InlineKeyboardMarkup:
+    items = list(SCENES.items())
+    rows = []
+    for i in range(0, len(items), 2):
+        rows.append([
+            InlineKeyboardButton(text=v["label"], callback_data=f"cfsm:scene:{k}")
+            for k, v in items[i:i + 2]
+        ])
+    rows.append([InlineKeyboardButton(text="✍️ Свой вариант", callback_data="cfsm:scene:custom")])
+    rows.append(_cancel_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _result_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Собрать другой запрос", callback_data="cfsm:start")],
+    ])
+
+
+async def _show(target, text: str, kb=None) -> None:
+    """Показывает шаг: правит то же сообщение, чтобы не засорять чат."""
+    if isinstance(target, CallbackQuery):
+        try:
+            await target.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except TelegramBadRequest as e:
+            if "not modified" in str(e):
+                return
+            await target.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await target.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+async def _lost(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await state.set_state(CaricaturePromptFSM.likeness_details)
-    text = (
-        "Шаг 1 из 3. **Что сохранить для сходства с фото и что добавить?**\n"
-        "Фото вы прикрепите уже у себя в Gemini. Нажмите кнопку ниже или напишите свой вариант."
-    )
-    if isinstance(target, CallbackQuery):
-        await target.message.answer(text, parse_mode="Markdown", reply_markup=_step1_keyboard())
-        await target.answer()
+    await _show(callback, TEXT_RESTART + TEXT_MODE, _modes_kb())
+
+
+# ---------- Сборка запроса ----------
+def _is_plain(data: dict) -> bool:
+    key = data.get("scene")
+    if key == "custom":
+        return not (data.get("scene_text") or "").strip()
+    scene = SCENES.get(key)
+    return not scene or not scene["text"]
+
+
+def _scene_sentence(data: dict) -> str:
+    if _is_plain(data):
+        return PLAIN_SENTENCE
+    if data.get("scene") == "custom":
+        return f"Scene: {data['scene_text'].strip()}."
+    return f"Scene: {SCENES[data['scene']]['text']}."
+
+
+def build_prompt(data: dict) -> str:
+    mode = data.get("mode", "caricature")
+    technique = style_technique_prompt(data.get("style"))
+    level = data.get("level")
+
+    if mode == "portrait":
+        level_data = PORTRAIT_LEVELS.get(level) or PORTRAIT_LEVELS["asphoto"]
+        keep = KEEP_PLAIN if _is_plain(data) else KEEP_SCENE
+        head = (
+            "Using the attached photo as the only reference, draw a portrait "
+            f"of this person in this style: {technique}."
+        )
+        body = level_data["text"].format(keep=keep)
     else:
-        await target.answer(text, parse_mode="Markdown", reply_markup=_step1_keyboard())
+        level_data = CARICATURE_LEVELS.get(level) or CARICATURE_LEVELS["soft"]
+        head = (
+            "Using the attached photo as the only reference, draw a caricature "
+            f"of this person in this style: {technique}."
+        )
+        body = level_data["text"]
+        exclude = (data.get("exclude") or "").strip()
+        if exclude:
+            body += f" Do not exaggerate: {exclude}."
+
+    return " ".join([head, body, _scene_sentence(data), RULES])
 
 
-async def _send_step2(target: Message | CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(CaricaturePromptFSM.style_emotion)
-    text = (
-        "Шаг 2 из 3. **Какая мимика и стиль шаржа?**\n"
-        "Выберите готовый вариант кнопкой или опишите своими словами."
+def _how_to_text(mode: str | None) -> str:
+    fixes = PORTRAIT_FIXES if mode == "portrait" else CARICATURE_FIXES
+    lines = []
+    for label, phrases in fixes:
+        codes = " или ".join(f"<code>{html.escape(p, quote=False)}</code>" for p in phrases)
+        lines.append(f"• {label}: {codes}")
+    return (
+        "<b>Что дальше</b>\n"
+        "1. Откройте свой ИИ (Gemini, ChatGPT и др.).\n"
+        "2. Прикрепите своё фото.\n"
+        "3. Вставьте запрос и отправьте.\n\n"
+        "Используйте фото только тех, кто согласен.\n\n"
+        "<b>Если результат не устроил</b>, отправьте следующим сообщением одну из поправок:\n"
+        + "\n".join(lines)
     )
-    if isinstance(target, CallbackQuery):
-        await target.message.answer(text, parse_mode="Markdown", reply_markup=_step2_keyboard())
-        await target.answer()
-    else:
-        await target.answer(text, parse_mode="Markdown", reply_markup=_step2_keyboard())
 
 
-async def _send_step3(
-    target: Message | CallbackQuery,
-    state: FSMContext,
-    selected_scene: str | None = None,
-) -> None:
-    await state.set_state(CaricaturePromptFSM.scene_mood)
-    extra = (
-        f"\n\nВыбрано: *{selected_scene}*. Нажмите **«✨ Собрать промпт»** или допишите детали текстом."
-        if selected_scene
-        else ""
-    )
-    text = (
-        "Шаг 3 из 3. **Какая сцена, фон и настроение кадра?**\n"
-        f"Выберите вариант кнопкой или напишите свой текст.{extra}"
-    )
-    if isinstance(target, CallbackQuery):
-        await target.message.answer(text, parse_mode="Markdown", reply_markup=_step3_keyboard(selected_scene))
-        await target.answer()
-    else:
-        await target.answer(text, parse_mode="Markdown", reply_markup=_step3_keyboard(selected_scene))
-
-
-async def _finalize_prompt(message: Message, state: FSMContext, scene_mood: str) -> None:
+async def _finish(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     await state.clear()
+    if not (data.get("mode") and data.get("style") and data.get("level")):
+        await message.answer(TEXT_RESTART + TEXT_MODE, parse_mode="HTML", reply_markup=_modes_kb())
+        return
 
-    wait_msg = await message.answer("✨ Собираю промпт с опорой на ваше фото...")
-    prompt_en, summary_ru = await build_caricature_prompt(
-        likeness_details=data.get("likeness_details", ""),
-        style_emotion=data.get("style_emotion", ""),
-        scene_mood=scene_mood,
+    prompt = build_prompt(data)
+    await message.answer(
+        "✅ <b>Запрос готов.</b> Нажмите на текст ниже, чтобы скопировать.\n\n"
+        f"<code>{html.escape(prompt, quote=False)}</code>",
+        parse_mode="HTML",
     )
-    await wait_msg.edit_text(
-        "Готовый промпт (вставьте в свой Gemini вместе с прикреплённым фото):\n\n"
-        f"`{prompt_en}`\n\n"
-        f"Что заложено: {summary_ru}",
-        parse_mode="Markdown",
-        reply_markup=_result_keyboard(),
+    await message.answer(
+        _how_to_text(data.get("mode")),
+        parse_mode="HTML",
+        reply_markup=_result_kb(),
     )
 
 
+# ---------- Обработчики ----------
 @router.message(Command("caricature_prompt"))
 @router.callback_query(F.data == "cfsm:start")
-async def start_caricature_fsm(event: Message | CallbackQuery, state: FSMContext) -> None:
-    await _send_step1(event, state)
+async def start_flow(event: Message | CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+        msg = event.message
+    else:
+        msg = event
+    await msg.answer(TEXT_MODE, parse_mode="HTML", reply_markup=_modes_kb())
 
 
 @router.callback_query(F.data == "cfsm:cancel")
-async def cancel_caricature_fsm(callback: CallbackQuery, state: FSMContext) -> None:
+async def cancel_flow(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await callback.message.answer("Сборка промпта отменена.")
     await callback.answer()
+    await _show(callback, "Сборка запроса отменена. Меню: /start")
 
 
-@router.callback_query(CaricaturePromptFSM.likeness_details, F.data.startswith("cfsm:s1:"))
-async def pick_step1(callback: CallbackQuery, state: FSMContext) -> None:
-    key = callback.data.removeprefix("cfsm:s1:")
-    value = LIKENESS_PRESETS.get(key)
-    if not value:
-        await callback.answer("Неизвестный вариант", show_alert=False)
-        return
-    await state.update_data(likeness_details=value)
-    await _send_step2(callback, state)
-
-
-@router.message(CaricaturePromptFSM.likeness_details, F.text)
-async def text_step1(message: Message, state: FSMContext) -> None:
-    await state.update_data(likeness_details=message.text.strip())
-    await _send_step2(message, state)
-
-
-@router.callback_query(CaricaturePromptFSM.style_emotion, F.data.startswith("cfsm:s2:"))
-async def pick_step2(callback: CallbackQuery, state: FSMContext) -> None:
-    key = callback.data.removeprefix("cfsm:s2:")
-    value = STYLE_PRESETS.get(key)
-    if not value:
-        await callback.answer("Неизвестный вариант", show_alert=False)
-        return
-    await state.update_data(style_emotion=value)
-    await _send_step3(callback, state)
-
-
-@router.message(CaricaturePromptFSM.style_emotion, F.text)
-async def text_step2(message: Message, state: FSMContext) -> None:
-    await state.update_data(style_emotion=message.text.strip())
-    await _send_step3(message, state)
-
-
-@router.callback_query(CaricaturePromptFSM.scene_mood, F.data.startswith("cfsm:s3:"))
-async def pick_step3(callback: CallbackQuery, state: FSMContext) -> None:
-    key = callback.data.removeprefix("cfsm:s3:")
-    value = SCENE_PRESETS.get(key)
-    if not value:
-        await callback.answer("Неизвестный вариант", show_alert=False)
-        return
-    await state.update_data(scene_mood=value)
-    await _send_step3(callback, state, selected_scene=value)
-
-
-@router.callback_query(CaricaturePromptFSM.scene_mood, F.data == "cfsm:build")
-async def build_from_preset(callback: CallbackQuery, state: FSMContext) -> None:
-    data = await state.get_data()
-    scene_mood = data.get("scene_mood") or SCENE_PRESETS["desk_warm"]
+@router.callback_query(F.data.startswith("cfsm:mode:"))
+async def pick_mode(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    await _finalize_prompt(callback.message, state, scene_mood)
+    mode = callback.data.split(":", 2)[2]
+    if mode not in MODES:
+        return
+    await state.clear()
+    await state.update_data(mode=mode)
+    await _show(callback, TEXT_STYLE, _styles_kb())
 
 
-@router.message(CaricaturePromptFSM.scene_mood, F.text)
-async def text_step3(message: Message, state: FSMContext) -> None:
+@router.callback_query(F.data.startswith("cfsm:style:"))
+async def pick_style(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    code = callback.data.split(":", 2)[2]
     data = await state.get_data()
-    preset = data.get("scene_mood")
-    typed = message.text.strip()
-    scene_mood = f"{preset}, {typed}" if preset else typed
-    await _finalize_prompt(message, state, scene_mood)
+    mode = data.get("mode")
+    if mode not in MODES:
+        await _lost(callback, state)
+        return
+    if code not in STYLES:
+        return
+    await state.update_data(style=code)
+    if mode == "portrait":
+        await _show(callback, TEXT_LEVEL_PORTRAIT, _levels_kb(PORTRAIT_LEVELS))
+    else:
+        await _show(callback, TEXT_LEVEL_CARICATURE, _levels_kb(CARICATURE_LEVELS))
+
+
+@router.callback_query(F.data.startswith("cfsm:lvl:"))
+async def pick_level(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    key = callback.data.split(":", 2)[2]
+    data = await state.get_data()
+    mode = data.get("mode")
+    if mode not in MODES or not data.get("style"):
+        await _lost(callback, state)
+        return
+    levels = PORTRAIT_LEVELS if mode == "portrait" else CARICATURE_LEVELS
+    if key not in levels:
+        return
+    await state.update_data(level=key)
+    if mode == "caricature":
+        await state.set_state(PromptFSM.exclude_text)
+        await _show(callback, TEXT_EXCLUDE, _exclude_kb())
+    else:
+        await _show(callback, TEXT_SCENE, _scenes_kb())
+
+
+@router.callback_query(PromptFSM.exclude_text, F.data == "cfsm:skipx")
+async def skip_exclude(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(None)
+    await state.update_data(exclude="")
+    await _show(callback, TEXT_SCENE, _scenes_kb())
+
+
+@router.message(PromptFSM.exclude_text, F.text)
+async def typed_exclude(message: Message, state: FSMContext) -> None:
+    text = _clean(message.text)
+    if text.startswith("/"):
+        await state.clear()
+        return
+    await state.update_data(exclude=text)
+    await state.set_state(None)
+    await message.answer(TEXT_SCENE, parse_mode="HTML", reply_markup=_scenes_kb())
+
+
+@router.callback_query(F.data.startswith("cfsm:scene:"))
+async def pick_scene(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    key = callback.data.split(":", 2)[2]
+    data = await state.get_data()
+    if not (data.get("mode") and data.get("style") and data.get("level")):
+        await _lost(callback, state)
+        return
+    if key == "custom":
+        await state.set_state(PromptFSM.scene_text)
+        await _show(callback, TEXT_ASK_SCENE, InlineKeyboardMarkup(inline_keyboard=[_cancel_row()]))
+        return
+    if key not in SCENES:
+        return
+    await state.update_data(scene=key)
+    await _finish(callback.message, state)
+    with suppress(Exception):
+        await callback.message.delete()
+
+
+@router.message(PromptFSM.scene_text, F.text)
+async def typed_scene(message: Message, state: FSMContext) -> None:
+    text = _clean(message.text)
+    if text.startswith("/"):
+        await state.clear()
+        return
+    await state.update_data(scene="custom", scene_text=text)
+    await state.set_state(None)
+    await _finish(message, state)
+
+
+@router.callback_query(F.data.startswith("cfsm:"))
+async def stale_button(callback: CallbackQuery, state: FSMContext) -> None:
+    """Кнопка из старого сообщения: начинаем заново."""
+    await callback.answer()
+    await state.clear()
+    await callback.message.answer(
+        "Меню обновилось, начнём заново.\n\n" + TEXT_MODE,
+        parse_mode="HTML",
+        reply_markup=_modes_kb(),
+    )
