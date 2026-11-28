@@ -83,10 +83,10 @@ STYLE_SET = {
 }
 
 MENU_HINT = {
-    "ru": "Выберите настроение или пришлите фото 📸",
-    "uk": "Оберіть настрій або надішліть фото 📸",
-    "en": "Pick a mood or send a photo 📸",
-    "es": "Elige un ánimo o envía una foto 📸",
+    "ru": "Пришлите своё фото или селфи 📸",
+    "uk": "Надішліть своє фото або селфі 📸",
+    "en": "Send your photo or a selfie 📸",
+    "es": "Envía tu foto o un selfie 📸",
 }
 
 
@@ -102,9 +102,8 @@ def get_photo_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t["btn_greed"], callback_data="pmood:greed"),
          InlineKeyboardButton(text=t["btn_flattery"], callback_data="pmood:flattery")],
         [InlineKeyboardButton(text=t["btn_lust"], callback_data="pmood:lust")],
-        [InlineKeyboardButton(text=t["btn_char"], callback_data="menu:chars"),
+        [InlineKeyboardButton(text=STYLE_BTN.get(lang, STYLE_BTN["ru"]), callback_data="menu:styles"),
          InlineKeyboardButton(text=t["btn_lang"], callback_data="menu:langs")],
-        [InlineKeyboardButton(text=STYLE_BTN.get(lang, STYLE_BTN["ru"]), callback_data="menu:styles")],
     ]
     if lang in PROMPT_BTN:
         rows.append([InlineKeyboardButton(text=PROMPT_BTN[lang], callback_data="cfsm:start")])
@@ -126,7 +125,7 @@ async def show_styles(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("setstyle:"))
 async def set_style(callback: CallbackQuery):
-    """Стиль выбран: запоминаем и возвращаем к выбору настроения."""
+    """Стиль выбран: запоминаем и возвращаем к выбору настроения или в меню."""
     code = callback.data.split(":", 1)[1]
     if code not in STYLES:
         await callback.answer()
@@ -152,56 +151,6 @@ async def set_style(callback: CallbackQuery):
             text + "\n\n" + MENU_HINT.get(lang, MENU_HINT["ru"]),
             reply_markup=get_main_keyboard(lang),
         )
-
-
-@router.callback_query(F.data.startswith("mood:"))
-async def handle_mood_generate(callback: CallbackQuery):
-    mood_code = callback.data.split(":")[1]
-    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
-    lang = user["language"]
-
-    allowed, _ = await can_generate(user["user_id"])
-    if not allowed:
-        await callback.answer(LOCALES[lang]["limit_reached"], show_alert=True)
-        return
-
-    await callback.answer()
-    status_msg = await callback.message.answer(LOCALES[lang]["generating"])
-
-    try:
-        caption, img_bytes = await asyncio.wait_for(
-            generate_happiness_card(
-                lang,
-                user["character_code"],
-                mood_code,
-                style_code=get_user_style(user["user_id"]),
-            ),
-            timeout=40.0
-        )
-        if img_bytes:
-            photo = BufferedInputFile(img_bytes, filename="caricature.jpg")
-            sent = await callback.message.answer_photo(photo=photo, caption=caption, reply_markup=get_main_keyboard(lang))
-            await increment_usage(user["user_id"], user["character_code"], mood_code, False, sent.photo[-1].file_id)
-        else:
-            await callback.message.answer(
-                f"{caption}\n\n(🎨 Художник сегодня в отпуске — картинка не сгенерировалась)",
-                reply_markup=get_main_keyboard(lang)
-            )
-            await increment_usage(user["user_id"], user["character_code"], mood_code, False, "")
-    except QuotaExceeded:
-        await callback.message.answer(
-            _quota_message(lang),
-            reply_markup=get_main_keyboard(lang),
-        )
-    except asyncio.TimeoutError:
-        logger.error("Timeout during mood generation for user %s", user["user_id"])
-        await callback.message.answer("⏳ Генерация заняла слишком много времени. Нажми на кнопку ещё раз!", reply_markup=get_main_keyboard(lang))
-    except Exception as e:
-        logger.exception("Generation error: %s", e)
-        await callback.message.answer("⏳ Сервер вдохновения перегружен. Нажми на кнопку ещё раз через пару секунд!", reply_markup=get_main_keyboard(lang))
-    finally:
-        with suppress(Exception):
-            await status_msg.delete()
 
 
 @router.message(F.photo)

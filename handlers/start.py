@@ -21,6 +21,55 @@ STYLE_BTN = {
     "es": "🎨 Estilo",
 }
 
+# Кнопка «Демо» (пока заглушка)
+DEMO_BTN = {
+    "ru": "💡 Демо (скоро)",
+    "uk": "💡 Демо (незабаром)",
+    "en": "💡 Demo (soon)",
+    "es": "💡 Demo (pronto)",
+}
+
+DEMO_INFO = {
+    "ru": "💡 Скоро здесь появятся примеры готовых шаржей в разных стилях.",
+    "uk": "💡 Незабаром тут з'являться приклади готових шаржів у різних стилях.",
+    "en": "💡 Examples of finished caricatures in different styles are coming soon.",
+    "es": "💡 Pronto habrá ejemplos de caricaturas terminadas en distintos estilos.",
+}
+
+WELCOME = {
+    "ru": (
+        "✨ Добро пожаловать в <b>Генератор счастья</b>!\n\n"
+        "📸 Пришлите своё фото или селфи, и я нарисую портрет или шарж в выбранном стиле.\n"
+        "🎁 Или соберите запрос для своего ИИ: он нарисует у вас.\n\n"
+        "Бесплатно сегодня: <b>{rem}</b>"
+    ),
+    "uk": (
+        "✨ Ласкаво просимо до <b>Генератора щастя</b>!\n\n"
+        "📸 Надішліть своє фото або селфі, і я намалюю портрет або шарж у вибраному стилі.\n"
+        "🎁 Або зберіть запит для свого ШІ: він намалює у вас.\n\n"
+        "Безкоштовно сьогодні: <b>{rem}</b>"
+    ),
+    "en": (
+        "✨ Welcome to the <b>Happiness Generator</b>!\n\n"
+        "📸 Send me your photo or a selfie and I'll draw a portrait or a caricature "
+        "in the style you choose.\n\n"
+        "Free today: <b>{rem}</b>"
+    ),
+    "es": (
+        "✨ ¡Bienvenido al <b>Generador de Felicidad</b>!\n\n"
+        "📸 Envíame tu foto o un selfie y dibujaré un retrato o una caricatura "
+        "en el estilo que elijas.\n\n"
+        "Gratis hoy: <b>{rem}</b>"
+    ),
+}
+
+STALE_TEXT = {
+    "ru": "Меню обновилось. Пришлите своё фото 📸 или выберите стиль.",
+    "uk": "Меню оновилось. Надішліть своє фото 📸 або оберіть стиль.",
+    "en": "The menu has been updated. Send your photo 📸 or choose a style.",
+    "es": "El menú se actualizó. Envía tu foto 📸 o elige un estilo.",
+}
+
 # Выбранный стиль каждого человека. Хранится в памяти бота:
 # после перезапуска у всех снова стиль по умолчанию.
 USER_STYLES: dict[int, str] = {}
@@ -36,21 +85,22 @@ def style_name(code: str, lang: str) -> str:
     return names.get(lang) or names["ru"]
 
 
+def menu_text(lang: str, rem) -> str:
+    return WELCOME.get(lang, WELCOME["ru"]).format(rem=rem)
+
+
 def get_main_keyboard(lang: str) -> InlineKeyboardMarkup:
     t = LOCALES[lang]
     rows = [
-        [InlineKeyboardButton(text=t["btn_warm"], callback_data="mood:warm"),
-         InlineKeyboardButton(text=t["btn_wisdom"], callback_data="mood:wisdom")],
-        [InlineKeyboardButton(text=t["btn_greed"], callback_data="mood:greed"),
-         InlineKeyboardButton(text=t["btn_flattery"], callback_data="mood:flattery")],
-        [InlineKeyboardButton(text=t["btn_lust"], callback_data="mood:lust")],
-        [InlineKeyboardButton(text=t["btn_char"], callback_data="menu:chars"),
+        [InlineKeyboardButton(text=STYLE_BTN.get(lang, STYLE_BTN["ru"]), callback_data="menu:styles"),
          InlineKeyboardButton(text=t["btn_lang"], callback_data="menu:langs")],
-        [InlineKeyboardButton(text=STYLE_BTN.get(lang, STYLE_BTN["ru"]), callback_data="menu:styles")],
     ]
     if lang in PROMPT_BTN:
         rows.append([InlineKeyboardButton(text=PROMPT_BTN[lang], callback_data="cfsm:start")])
-    rows.append([InlineKeyboardButton(text=t["btn_vip"], callback_data="menu:vip")])
+    rows.append([
+        InlineKeyboardButton(text=DEMO_BTN.get(lang, DEMO_BTN["ru"]), callback_data="menu:demo"),
+        InlineKeyboardButton(text=t["btn_vip"], callback_data="menu:vip"),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -63,12 +113,6 @@ def get_styles_keyboard(lang: str, current: str) -> InlineKeyboardMarkup:
             callback_data=f"setstyle:{code}",
         )])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def get_chars_keyboard(lang: str) -> InlineKeyboardMarkup:
-    chars = LOCALES[lang]["chars"]
-    buttons = [[InlineKeyboardButton(text=name, callback_data=f"setchar:{code}")] for code, name in chars.items()]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_langs_keyboard() -> InlineKeyboardMarkup:
@@ -86,36 +130,11 @@ async def cmd_start(message: Message):
     user = await get_or_create_user(message.from_user.id, message.from_user.username, lang_code)
     lang = user["language"]
     _, rem = await can_generate(user["user_id"])
-    char_name = LOCALES[lang]["chars"].get(user["character_code"], "👩")
 
     await message.answer(
-        f"{LOCALES[lang]['welcome']}\n\n" + LOCALES[lang]["menu_title"].format(char=char_name, rem=rem),
+        menu_text(lang, rem),
         reply_markup=get_main_keyboard(lang),
-        parse_mode="Markdown"
-    )
-
-
-@router.callback_query(F.data == "menu:chars")
-async def show_chars(callback: CallbackQuery):
-    await callback.answer()
-    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
-    lang = user["language"]
-    await callback.message.answer(LOCALES[lang]["choose_char"], reply_markup=get_chars_keyboard(lang))
-
-
-@router.callback_query(F.data.startswith("setchar:"))
-async def set_char(callback: CallbackQuery):
-    await callback.answer()
-    char_code = callback.data.split(":", 1)[1]
-    await update_user_field(callback.from_user.id, "character_code", char_code)
-    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
-    lang = user["language"]
-    _, rem = await can_generate(user["user_id"])
-    char_name = LOCALES[lang]["chars"].get(char_code, "👩")
-    await callback.message.answer(
-        LOCALES[lang]["menu_title"].format(char=char_name, rem=rem),
-        reply_markup=get_main_keyboard(lang),
-        parse_mode="Markdown"
+        parse_mode="HTML",
     )
 
 
@@ -128,20 +147,41 @@ async def show_langs(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("setlang:"))
 async def set_lang(callback: CallbackQuery):
-    await callback.answer()
     lang = callback.data.split(":", 1)[1]
+    if lang not in LOCALES:
+        await callback.answer()
+        return
+    await callback.answer()
     await update_user_field(callback.from_user.id, "language", lang)
     user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
     _, rem = await can_generate(user["user_id"])
-    char_name = LOCALES[lang]["chars"].get(user["character_code"], "👩")
     await callback.message.answer(
-        LOCALES[lang]["menu_title"].format(char=char_name, rem=rem),
+        menu_text(lang, rem),
         reply_markup=get_main_keyboard(lang),
-        parse_mode="Markdown"
+        parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data == "menu:demo")
+async def show_demo(callback: CallbackQuery):
+    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
+    lang = user["language"]
+    await callback.answer(DEMO_INFO.get(lang, DEMO_INFO["ru"]), show_alert=True)
 
 
 @router.callback_query(F.data == "menu:vip")
 async def show_vip(callback: CallbackQuery):
     user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
     await callback.answer(LOCALES[user["language"]]["vip_info"], show_alert=True)
+
+
+@router.callback_query(F.data.startswith(("mood:", "setchar:")) | (F.data == "menu:chars"))
+async def stale_menu_button(callback: CallbackQuery):
+    """Кнопки из старых сообщений (настроения, смена героя): объясняем и показываем меню."""
+    await callback.answer()
+    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
+    lang = user["language"]
+    await callback.message.answer(
+        STALE_TEXT.get(lang, STALE_TEXT["ru"]),
+        reply_markup=get_main_keyboard(lang),
+    )
