@@ -11,11 +11,26 @@ from PIL import Image, ImageOps
 from config import CF_ACCOUNT_ID, CF_API_TOKEN, GEMINI_API_KEY
 from core.characters import CHARACTER_PROMPTS, CULTURE_PROMPTS, MOOD_PROMPTS
 from core.styles import style_photo_prompt, style_hero_prompt
+from core.captions import CAPTION_GENRES, CAPTION_TONES
+from handlers.caricature_prompt import build_prompt
 
 logger = logging.getLogger(__name__)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+
+# Настройки рисования по умолчанию: шарж, мягкий гротеск, простой фон, без подписи
+DEFAULT_SETTINGS = {
+    "mode": "caricature",
+    "style": "gouache",
+    "level": "soft",
+    "scene": "plain",
+    "exclude": "",
+    "caption": "none",
+    "topic": "",
+}
+
+LANG_NAMES = {"ru": "Russian", "uk": "Ukrainian", "en": "English", "es": "Spanish"}
 
 FALLBACK_SCENES = {
     "warm": "a friendly confident smile, a cup of coffee in hand, soft golden light",
@@ -348,5 +363,100 @@ async def generate_happiness_card(
         raise
     except Exception as e:
         logger.warning("   Ошибка Cloudflare FLUX: %s", e)
+
+    return caption, image_bytes
+
+
+# =====================================================================
+# Рисование по настройкам (режим, стиль, сила, сцена, подпись)
+# =====================================================================
+
+def _flux_prompt(settings: dict) -> str:
+    """Запрос к рисующей модели: тот же текст, что в «Промпте для своего ИИ»,
+    но без подписи, и фото названо «image 0»."""
+    base = build_prompt({**settings, "caption": "none"})
+    base = base.replace("the attached photo", "image 0")
+    return base + " Do not reuse the background of the photo. Full head visible with margin around."
+
+
+async def _make_caption(lang: str, settings: dict, photo_bytes: bytes) -> str:
+    """Подпись выбранного жанра через Gemini. Если Gemini занят, берётся запасная."""
+    fallback = FALLBACK_CAPTIONS.get(lang, FALLBACK_CAPTIONS["ru"])
+    genre = CAPTION_GENRES.get(settings.get("caption"))
+    if not genre or not genre["text"]:
+        return ""
+
+    tone = CAPTION_TONES.get(settings.get("level"), CAPTION_TONES["soft"])
+    topic = (settings.get("topic") or "").strip()
+    topic_line = f"Topic, occasion or name to use: {topic}.\n" if topic else ""
+    system_instruction = (
+        "You write short captions for a friendly caricature bot.\n"
+        f"Write in {LANG_NAMES.get(lang, 'Russian')}.\n"
+        f"Genre: {genre['text']}.\n"
+        f"{tone}\n"
+        f"{topic_line}"
+        "A photo of the person is attached: you may mention one harmless visible detail "
+        "(clothes, glasses, props), never their age, weight or looks.\n"
+        "Never attribute the text to a real person. No hashtags and no emojis.\n"
+        'Return strictly a JSON object: {"caption": "..."}'
+    )
+
+    try:
+        pil_img = await asyncio.to_thread(_prepare_input_image, photo_bytes)
+        raw = await _ask_gemini([pil_img, "Write the caption now."], system_instruction)
+        if not raw:
+            logger.warning("   Gemini недоступен, берём запасную подпись")
+            return fallback
+        clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        text = str(json.loads(clean).get("caption", "")).strip()
+        return text[:900] if text else fallback
+    except Exception as e:
+        logger.warning("   Не удалось получить подпись: %s", e)
+        return fallback
+
+
+async def generate_by_settings(
+    lang: str,
+    photo_bytes: bytes,
+    settings: dict | None = None,
+) -> tuple[str, bytes | None]:
+    """Рисует по фото и настройкам. Возвращает (подпись или "", картинка или None)."""
+    if _quota_exhausted_today():
+        raise QuotaExceeded()
+
+    s = {**DEFAULT_SETTINGS, **(settings or {})}
+    if s.get("mode") == "portrait":
+        s["caption"] = "none"
+
+    prompt = _flux_prompt(s)
+    logger.info(
+        "Рисую по настройкам %s. Запрос к FLUX: %s",
+        {k: s.get(k) for k in ("mode", "style", "level", "scene", "caption")},
+        prompt[:500],
+    )
+
+    caption_task = None
+    if s.get("caption") != "none":
+        caption_task = asyncio.create_task(_make_caption(lang, s, photo_bytes))
+
+    image_bytes = None
+    try:
+        ref = await asyncio.to_thread(_prepare_cf_reference, photo_bytes)
+        image_bytes = await _generate_cf_with_reference(prompt, ref)
+        if image_bytes:
+            logger.info("   Картинка получена (%d байт)", len(image_bytes))
+    except QuotaExceeded:
+        if caption_task:
+            caption_task.cancel()
+        raise
+    except Exception as e:
+        logger.warning("   Ошибка Cloudflare FLUX: %s", e)
+
+    caption = ""
+    if caption_task:
+        try:
+            caption = await caption_task
+        except Exception:
+            caption = FALLBACK_CAPTIONS.get(lang, FALLBACK_CAPTIONS["ru"])
 
     return caption, image_bytes
